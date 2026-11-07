@@ -10,14 +10,16 @@ export function projectName(): string | undefined {
 }
 
 export function isProjectLockfile(uri: vscode.Uri): boolean {
-  return /\/(?:package-lock\.json|pnpm-lock\.yaml)$/.test(uri.path) && !uri.path.includes('/node_modules/');
+  return /\/(?:package-lock\.json|pnpm-lock\.yaml|composer\.lock)$/.test(uri.path)
+    && !uri.path.includes('/node_modules/')
+    && !uri.path.includes('/vendor/');
 }
 
 /** Finds supported dependency lockfiles in the workspace or a specific folder, ignoring node_modules. */
 export async function findLockfiles(folder?: vscode.WorkspaceFolder): Promise<vscode.Uri[]> {
-  const pattern = '**/{package-lock.json,pnpm-lock.yaml}';
+  const pattern = '**/{package-lock.json,pnpm-lock.yaml,composer.lock}';
   const include = folder ? new vscode.RelativePattern(folder, pattern) : pattern;
-  const found = await vscode.workspace.findFiles(include, '**/node_modules/**', 50);
+  const found = await vscode.workspace.findFiles(include, '**/{node_modules,vendor}/**', 50);
   return found.sort((a, b) => a.path.length - b.path.length);
 }
 
@@ -29,6 +31,16 @@ export async function readLockfile(uri: vscode.Uri): Promise<Lockfile> {
   }
   const text = new TextDecoder('utf-8').decode(await vscode.workspace.fs.readFile(uri));
   if (uri.path.endsWith('/pnpm-lock.yaml')) return parsePnpmLockfile(text);
+  if (uri.path.endsWith('/composer.lock')) {
+    const manifestUri = vscode.Uri.joinPath(uri, '..', 'composer.json');
+    let manifestText: string | undefined;
+    try {
+      manifestText = new TextDecoder('utf-8').decode(await vscode.workspace.fs.readFile(manifestUri));
+    } catch {
+      // composer.json improves direct-dependency classification but is not required for a useful scan.
+    }
+    return parseComposerLockfile(text, manifestText);
+  }
 
   let data: unknown;
   try {
@@ -83,6 +95,84 @@ export function parsePnpmLockfile(text: string): Lockfile {
   }
 
   return validateLockfile({ lockfileVersion: 3, packages, provenyxSource: 'pnpm-lock.yaml' });
+}
+
+export function parseComposerLockfile(text: string, manifestText?: string): Lockfile {
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error('composer.lock is not valid JSON.');
+  }
+  if (!isRecord(data) || !Array.isArray(data.packages) || !Array.isArray(data['packages-dev'])) {
+    throw new Error('composer.lock must contain "packages" and "packages-dev" arrays.');
+  }
+
+  const warnings: string[] = [];
+  let manifest: UnknownRecord = {};
+  if (manifestText === undefined) {
+    warnings.push('composer.json was not found; direct dependencies are unknown');
+  } else {
+    try {
+      const parsed = JSON.parse(manifestText) as unknown;
+      if (isRecord(parsed)) manifest = parsed;
+      else warnings.push('composer.json does not contain a JSON object; direct dependencies are unknown');
+    } catch {
+      warnings.push('composer.json is invalid; direct dependencies are unknown');
+    }
+  }
+
+  const rawPackages = [...data.packages, ...data['packages-dev']];
+  const versions = new Map<string, string>();
+  for (const rawPackage of rawPackages) {
+    if (!isRecord(rawPackage) || typeof rawPackage.name !== 'string' || typeof rawPackage.version !== 'string') continue;
+    versions.set(rawPackage.name, normalizeComposerVersion(rawPackage.version));
+  }
+
+  const packages: Record<string, unknown> = {
+    '': {
+      name: typeof manifest.name === 'string' ? manifest.name : undefined,
+      dependencies: composerDependencyMap(manifest.require, versions),
+      devDependencies: composerDependencyMap(manifest['require-dev'], versions),
+    },
+  };
+  for (const rawPackage of rawPackages) {
+    if (!isRecord(rawPackage) || typeof rawPackage.name !== 'string' || typeof rawPackage.version !== 'string') {
+      warnings.push('Skipped a Composer package whose name or exact version is unavailable');
+      continue;
+    }
+    const dist = isRecord(rawPackage.dist) ? rawPackage.dist : {};
+    const source = isRecord(rawPackage.source) ? rawPackage.source : {};
+    packages[`vendor/${rawPackage.name}`] = {
+      name: rawPackage.name,
+      version: normalizeComposerVersion(rawPackage.version),
+      resolved: typeof dist.url === 'string' ? dist.url : typeof source.url === 'string' ? source.url : undefined,
+      integrity: typeof dist.shasum === 'string' && dist.shasum ? dist.shasum : undefined,
+      dependencies: composerDependencyMap(rawPackage.require, versions),
+    };
+  }
+
+  return validateLockfile({
+    name: typeof manifest.name === 'string' ? manifest.name : undefined,
+    lockfileVersion: 3,
+    packages,
+    provenyxSource: 'composer.lock',
+    provenyxWarnings: warnings,
+  });
+}
+
+function composerDependencyMap(value: unknown, versions: Map<string, string>): Record<string, string> {
+  if (!isRecord(value)) return {};
+  return Object.fromEntries(
+    Object.keys(value).flatMap((name) => {
+      const version = versions.get(name);
+      return version ? [[name, version]] : [];
+    }),
+  );
+}
+
+function normalizeComposerVersion(version: string): string {
+  return /^v\d/.test(version) ? version.slice(1) : version;
 }
 
 function normalizeDependencyMap(value: unknown): Record<string, string> {

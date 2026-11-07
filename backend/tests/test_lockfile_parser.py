@@ -82,3 +82,21 @@ def test_parse_skips_entries_without_exact_versions_instead_of_guessing():
 
     assert parsed.packages == ()
     assert parsed.warnings == ("Skipped package at 'node_modules/link': name or exact version is unavailable",)
+
+
+def test_normalized_composer_lock_uses_packagist_ecosystem_and_adapter_warnings():
+    parsed = parse_lockfile(
+        {
+            "lockfileVersion": 3,
+            "provenyxSource": "composer.lock",
+            "provenyxWarnings": ["composer.json was not found; direct dependencies are unknown"],
+            "packages": {
+                "": {},
+                "vendor/symfony/console": {"name": "symfony/console", "version": "7.1.3"},
+            },
+        }
+    )
+
+    assert parsed.ecosystem == "Packagist"
+    assert parsed.packages[0].name == "symfony/console"
+    assert parsed.warnings == ("composer.json was not found; direct dependencies are unknown",)

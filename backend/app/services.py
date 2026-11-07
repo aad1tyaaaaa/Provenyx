@@ -63,14 +63,25 @@ class ScanService:
         self.repository.set_analyzing(scan_id)
         try:
             parsed = parse_lockfile(row.lockfile)
-            metadata = await self.registry.fetch_many((package.name, package.version) for package in parsed.packages)
+            metadata = (
+                await self.registry.fetch_many((package.name, package.version) for package in parsed.packages)
+                if parsed.ecosystem == "npm"
+                else {}
+            )
             scan_graph = build_scan_graph(scan_id, parsed, metadata)
             analysis_warnings = list(scan_graph.warnings)
+            if parsed.ecosystem != "npm":
+                analysis_warnings.append(
+                    "Packagist registry enrichment is not available; publisher, install-script, provenance, and "
+                    "release-timing rules did not run."
+                )
             nodes = scan_graph.nodes
             project_name = row.project_name or parsed.name
             findings = []
             if self.osv is not None:
-                advisories = await self.osv.fetch_many((node.name, node.version) for node in nodes)
+                advisories = await self.osv.fetch_many(
+                    ((node.name, node.version) for node in nodes), ecosystem=parsed.ecosystem
+                )
                 unavailable_count = sum(result is None for result in advisories.values())
                 if unavailable_count:
                     analysis_warnings.append(
@@ -105,27 +116,34 @@ class ScanService:
                             observed_at=row.created_at,
                         )
                     )
-                    findings.extend(
-                        detect_publisher_changes(
-                            baseline_graph,
-                            scan_graph,
-                            observed_at=row.created_at,
+                    if parsed.ecosystem == "npm":
+                        findings.extend(
+                            detect_publisher_changes(
+                                baseline_graph,
+                                scan_graph,
+                                observed_at=row.created_at,
+                            )
                         )
-                    )
-                    findings.extend(detect_install_script_changes(baseline_graph, scan_graph, observed_at=row.created_at))
-                    findings.extend(detect_provenance_regressions(baseline_graph, scan_graph, observed_at=row.created_at))
-                    comparison = compare_graphs(baseline_graph, scan_graph)
-                    release_times = await self.registry.fetch_release_times_many(
-                        change.name for change in comparison.version_changes
-                    )
-                    findings.extend(
-                        detect_unusual_release_timing(
-                            baseline_graph,
-                            scan_graph,
-                            release_times=release_times,
-                            observed_at=row.created_at,
+                        findings.extend(
+                            detect_install_script_changes(baseline_graph, scan_graph, observed_at=row.created_at)
                         )
-                    )
+                        findings.extend(
+                            detect_provenance_regressions(baseline_graph, scan_graph, observed_at=row.created_at)
+                        )
+                        comparison = compare_graphs(baseline_graph, scan_graph)
+                        release_times = await self.registry.fetch_release_times_many(
+                            change.name for change in comparison.version_changes
+                        )
+                        findings.extend(
+                            detect_unusual_release_timing(
+                                baseline_graph,
+                                scan_graph,
+                                release_times=release_times,
+                                observed_at=row.created_at,
+                            )
+                        )
+                    else:
+                        comparison = compare_graphs(baseline_graph, scan_graph)
             findings.sort(
                 key=lambda finding: (-finding.priority_score, finding.rule_id, finding.package, finding.version)
             )

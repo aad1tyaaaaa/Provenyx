@@ -5,7 +5,7 @@ const DEBOUNCE_MS = 1500;
 
 /** Starts the consent-gated scan flow after a supported dependency lockfile changes. */
 export function createLockfileWatcher(onChange: (uri: vscode.Uri) => void): vscode.Disposable {
-  const watcher = vscode.workspace.createFileSystemWatcher('**/{package-lock.json,pnpm-lock.yaml}');
+  const watcher = vscode.workspace.createFileSystemWatcher('**/{package-lock.json,pnpm-lock.yaml,composer.lock}');
   const pending = new Map<string, NodeJS.Timeout>();
 
   const scan = (uri: vscode.Uri) => {
@@ -14,7 +14,7 @@ export function createLockfileWatcher(onChange: (uri: vscode.Uri) => void): vsco
     onChange(uri);
   };
 
-  // npm often writes the lockfile more than once per install; collapse bursts into one prompt.
+  // Package managers often write the lockfile more than once per install; collapse bursts into one prompt.
   const handler = (uri: vscode.Uri) => {
     if (!isProjectLockfile(uri)) return;
     const key = uri.toString();

@@ -29,6 +29,7 @@ class ParsedLockfile:
     name: str | None
     version: str | None
     lockfile_version: int
+    ecosystem: str
     root_dependency_groups: dict[str, dict[str, str]]
     packages: tuple[ParsedPackage, ...]
     warnings: tuple[str, ...] = ()
@@ -50,7 +51,8 @@ def _parse_modern_lockfile(lockfile: Mapping[str, Any], lockfile_version: int) -
     root = package_entries.get("")
     root_entry = root if isinstance(root, Mapping) else {}
     packages: list[ParsedPackage] = []
-    warnings: list[str] = []
+    raw_warnings = lockfile.get("provenyxWarnings")
+    warnings = [warning for warning in raw_warnings if isinstance(warning, str)] if isinstance(raw_warnings, list) else []
 
     for raw_path, raw_entry in package_entries.items():
         if not raw_path or not isinstance(raw_path, str) or not isinstance(raw_entry, Mapping):
@@ -76,6 +78,7 @@ def _parse_modern_lockfile(lockfile: Mapping[str, Any], lockfile_version: int) -
         name=_optional_string(lockfile.get("name")) or _optional_string(root_entry.get("name")),
         version=_optional_string(lockfile.get("version")) or _optional_string(root_entry.get("version")),
         lockfile_version=lockfile_version,
+        ecosystem="Packagist" if lockfile.get("provenyxSource") == "composer.lock" else "npm",
         root_dependency_groups=_dependency_groups(root_entry),
         packages=tuple(packages),
         warnings=tuple(warnings),
@@ -99,6 +102,7 @@ def _parse_v1_lockfile(lockfile: Mapping[str, Any]) -> ParsedLockfile:
         name=_optional_string(lockfile.get("name")),
         version=_optional_string(lockfile.get("version")),
         lockfile_version=1,
+        ecosystem="npm",
         root_dependency_groups={"prod": root_dependencies},
         packages=tuple(packages),
         warnings=tuple(warnings),

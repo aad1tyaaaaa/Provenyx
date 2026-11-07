@@ -22,7 +22,7 @@ class OsvAdvisory:
 
 
 class OsvClient:
-    """Exact-version OSV lookups for npm releases.
+    """Exact-version OSV lookups for supported package ecosystems.
 
     `fetch_many` returns, per release: a tuple of advisories (empty = none known), or None when the lookup
     was unavailable. Those are different security states and are never conflated. Successful results are
@@ -49,18 +49,18 @@ class OsvClient:
         self._batch_size = max(1, min(batch_size, BATCH_LIMIT))
         self._transport = transport
         self._clock = clock
-        self._cache: dict[tuple[str, str], tuple[float, tuple[OsvAdvisory, ...]]] = {}
+        self._cache: dict[tuple[str, str, str], tuple[float, tuple[OsvAdvisory, ...]]] = {}
         self._details: dict[str, tuple[float, OsvAdvisory]] = {}
 
     async def fetch_many(
-        self, releases: Iterable[tuple[str, str]]
+        self, releases: Iterable[tuple[str, str]], *, ecosystem: str = "npm"
     ) -> dict[tuple[str, str], tuple[OsvAdvisory, ...] | None]:
         unique_releases = tuple(dict.fromkeys(releases))
         now = self._clock()
         results: dict[tuple[str, str], tuple[OsvAdvisory, ...] | None] = {}
         missing = []
         for release in unique_releases:
-            cached = self._cache.get(release)
+            cached = self._cache.get((ecosystem, *release))
             if cached is not None and cached[0] > now:
                 results[release] = cached[1]
             else:
@@ -72,7 +72,7 @@ class OsvClient:
                 transport=self._transport,
                 follow_redirects=False,
             ) as client:
-                matched_ids = await self._query_batches(client, missing)
+                matched_ids = await self._query_batches(client, missing, ecosystem)
                 needed = {vuln_id for ids in matched_ids.values() if ids for vuln_id in ids}
                 details = await self._fetch_details(client, needed)
             expires = self._clock() + self._ttl
@@ -90,20 +90,26 @@ class OsvClient:
                 )
                 results[release] = advisories
                 if all(vuln_id in details for vuln_id in ids):
-                    self._cache[release] = (expires, advisories)
+                    self._cache[(ecosystem, *release)] = (expires, advisories)
         return {release: results[release] for release in unique_releases}
 
     async def _query_batches(
-        self, client: httpx.AsyncClient, releases: list[tuple[str, str]]
+        self, client: httpx.AsyncClient, releases: list[tuple[str, str]], ecosystem: str
     ) -> dict[tuple[str, str], tuple[str, ...] | None]:
         chunks = [releases[start : start + self._batch_size] for start in range(0, len(releases), self._batch_size)]
         matched: dict[tuple[str, str], tuple[str, ...] | None] = {}
-        for chunk, ids in zip(chunks, await asyncio.gather(*(self._query_batch(client, chunk) for chunk in chunks)), strict=True):
+        for chunk, ids in zip(
+            chunks,
+            await asyncio.gather(*(self._query_batch(client, chunk, ecosystem) for chunk in chunks)),
+            strict=True,
+        ):
             matched.update(zip(chunk, ids, strict=True))
         return matched
 
-    async def _query_batch(self, client: httpx.AsyncClient, chunk: list[tuple[str, str]]) -> list[tuple[str, ...] | None]:
-        body = {"queries": [{"package": {"ecosystem": "npm", "name": name}, "version": version} for name, version in chunk]}
+    async def _query_batch(
+        self, client: httpx.AsyncClient, chunk: list[tuple[str, str]], ecosystem: str
+    ) -> list[tuple[str, ...] | None]:
+        body = {"queries": [{"package": {"ecosystem": ecosystem, "name": name}, "version": version} for name, version in chunk]}
         payload = await self._request(client, "POST", "/v1/querybatch", json=body)
         entries = payload.get("results") if isinstance(payload, dict) else None
         if not isinstance(entries, list) or len(entries) != len(chunk):

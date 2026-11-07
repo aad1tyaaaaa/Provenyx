@@ -7,6 +7,7 @@ const extensionDevelopmentPath = path.resolve(__dirname, '..');
 
 async function main() {
   process.env.PROVENYX_AUTH_PROVIDER = 'provenyx-test';
+  const vscodeExecutablePath = process.env.VSCODE_EXECUTABLE_PATH;
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'provenyx-vscode-profile-'));
   fs.mkdirSync(path.join(userData, 'User'));
   fs.writeFileSync(
@@ -22,12 +23,14 @@ async function main() {
     await runTests({
       extensionDevelopmentPath,
       extensionTestsPath: path.resolve(__dirname, 'smoke.js'),
+      vscodeExecutablePath,
       launchArgs: [path.resolve(__dirname, '../../demo/sample-project'), '--disable-extensions', `--user-data-dir=${userData}`],
     });
 
     await runTests({
       extensionDevelopmentPath,
       extensionTestsPath: path.resolve(__dirname, 'smoke-empty.js'),
+      vscodeExecutablePath,
       launchArgs: [empty, '--disable-extensions', `--user-data-dir=${userData}`],
     });
   } finally {

@@ -41,6 +41,7 @@ function startFakeApi(mode) {
         assert.strictEqual(req.headers.authorization, 'Bearer synthetic-github-token');
         const parsed = JSON.parse(body);
         assert.strictEqual(parsed.lockfile.lockfileVersion, 3, 'extension must send the parsed lockfile');
+        server.lastRequestBody = body;
         server.lastProjectName = parsed.project_name;
         server.lastLockfile = parsed.lockfile;
         server.posts = (server.posts ?? 0) + 1;
@@ -180,7 +181,41 @@ snapshots:
     assert.ok(normalized.some((entry) => entry.name === 'child' && entry.version === '2.0.0'));
     api.close();
 
-    // 5. Backend offline: no crash, clear state.
+    // 5. Composer: combine composer.lock with composer.json and preserve exact Packagist releases.
+    api = await startFakeApi('full');
+    await useApi(`http://127.0.0.1:${api.address().port}`);
+    const composerPath = vscode.Uri.joinPath(vscode.workspace.workspaceFolders[0].uri, 'composer.lock');
+    const composerManifestPath = vscode.Uri.joinPath(vscode.workspace.workspaceFolders[0].uri, 'composer.json');
+    const phpPath = vscode.Uri.joinPath(vscode.workspace.workspaceFolders[0].uri, 'index.php');
+    const phpSourceMarker = 'PHP_SOURCE_MUST_STAY_LOCAL_7f23c1';
+    await vscode.workspace.fs.writeFile(phpPath, Buffer.from(`<?php\n\necho '${phpSourceMarker}';\n`));
+    await vscode.workspace.fs.writeFile(composerManifestPath, Buffer.from(JSON.stringify({
+      name: 'provenyx/php-demo',
+      require: { php: '^8.2', 'symfony/console': '^7.1' },
+    })));
+    await vscode.workspace.fs.writeFile(composerPath, Buffer.from(JSON.stringify({
+      packages: [
+        { name: 'symfony/console', version: 'v7.1.3', require: { 'symfony/string': '^7.1' } },
+        { name: 'symfony/string', version: 'v7.1.2' },
+      ],
+      'packages-dev': [],
+    })));
+    try {
+      await vscode.commands.executeCommand('provenyx.scanDependencies', composerPath);
+    } finally {
+      await vscode.workspace.fs.delete(composerPath);
+      await vscode.workspace.fs.delete(composerManifestPath);
+      await vscode.workspace.fs.delete(phpPath);
+    }
+    assert.strictEqual(api.lastProjectName, 'provenyx/php-demo');
+    assert.strictEqual(api.lastLockfile.provenyxSource, 'composer.lock');
+    assert.deepStrictEqual(api.lastLockfile.packages[''].dependencies, { 'symfony/console': '7.1.3' });
+    assert.strictEqual(api.lastLockfile.packages['vendor/symfony/console'].dependencies['symfony/string'], '7.1.2');
+    assert.strictEqual(api.lastLockfile.packages['vendor/symfony/string'].version, '7.1.2');
+    assert.ok(!api.lastRequestBody.includes(phpSourceMarker), 'PHP source must never be submitted');
+    api.close();
+
+    // 6. Backend offline: no crash, clear state.
     await useApi('http://127.0.0.1:9');
     const errors = [];
     const originalError = vscode.window.showErrorMessage;
@@ -197,7 +232,7 @@ snapshots:
     assert.strictEqual(tree.lastScan.kind, 'failed');
     assert.match(tree.lastScan.message, /Cannot reach the Provenyx API/);
 
-    // 6. Lockfile watcher: a burst of writes starts ONE consent-gated scan, and declining sends nothing.
+    // 7. Lockfile watcher: a burst of writes starts ONE consent-gated scan, and declining sends nothing.
     api = await startFakeApi('full');
     await useApi(`http://127.0.0.1:${api.address().port}`);
     consentChoice = undefined;
@@ -219,7 +254,7 @@ snapshots:
     await vscode.workspace.getConfiguration('provenyx').update('autoScanEnabled', undefined, vscode.ConfigurationTarget.Global);
     api.close();
 
-    // 7. Optional: the real backend, if PROVENYX_SMOKE_REAL_API is set (e.g. http://127.0.0.1:8000).
+    // 8. Optional: the real backend, if PROVENYX_SMOKE_REAL_API is set (e.g. http://127.0.0.1:8000).
     const real = process.env.PROVENYX_SMOKE_REAL_API;
     if (real) {
       await useApi(real);

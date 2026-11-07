@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add PHP Composer support for `composer.lock`, using adjacent `composer.json` declarations to classify direct dependencies.
+- Query OSV with the `Packagist` ecosystem and avoid npm metadata requests for Composer packages.
+
+## Unreleased
+
 - Ignore the legacy extension's `http://localhost:8000` default for `provenyx.apiBaseUrl`.
 - Keep activating when the legacy extension already registered the Provenyx commands.
 - Add an **Uninstall** button to the legacy extension warning.

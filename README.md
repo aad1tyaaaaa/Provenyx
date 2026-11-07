@@ -23,7 +23,7 @@ Explainable software supply-chain security for npm projects, in your editor, you
 
 ## Overview
 
-Provenyx is a software supply-chain security tool for JavaScript and TypeScript projects that use npm. It reviews what changed in your dependencies, explains each finding with evidence, and checks npm releases against a blockchain registry of approved release manifests. It never installs or runs your packages.
+Provenyx is a software supply-chain security tool for JavaScript and TypeScript projects using npm or pnpm, and PHP projects using Composer. It reviews what changed in your dependencies and explains each finding with evidence. npm releases can also be checked against a blockchain registry of approved release manifests. Provenyx never installs or runs your packages.
 
 It has three parts: a **VS Code extension** (the main product), a **web dashboard** for deeper investigation, and a **smart-contract registry** for approved releases. All three use one **FastAPI backend**.
 
@@ -126,7 +126,7 @@ Every answer comes with its evidence, and Provenyx is explicit about what it doe
  └─────────────────────────────────────────────┘
 ```
 
-1. In VS Code you run **Provenyx: Scan Dependencies**. The extension finds `package-lock.json`, checks it locally, and asks for consent before sending anything. It names the destination URL, and only the lockfile is sent.
+1. In VS Code you run **Provenyx: Scan Dependencies**. The extension finds `package-lock.json`, `pnpm-lock.yaml`, or `composer.lock`, checks it locally, and asks for consent before sending anything. For Composer, dependency declarations from adjacent `composer.json` are included when available so direct packages can be identified.
 2. The backend stores a snapshot and analyses it in the background. It parses the lockfile, builds a dependency graph that keeps multiple installed versions distinct, and fetches public npm metadata with bounded concurrency, caching, timeouts and retries.
 3. Every exact package version is checked against public OSV advisories. If the project has been scanned before, the new graph is also compared with the latest completed scan for suspicious changes.
 4. The extension follows the scan to completion and lists the findings in the sidebar. Clicking a finding opens it in the dashboard.

@@ -25,6 +25,8 @@
     "supply chain",
     "npm",
     "pnpm",
+    "php",
+    "composer",
     "dependencies",
     "package-lock"
   ],
@@ -32,7 +34,8 @@
   "activationEvents": [
     "onStartupFinished",
     "workspaceContains:package-lock.json",
-    "workspaceContains:pnpm-lock.yaml"
+    "workspaceContains:pnpm-lock.yaml",
+    "workspaceContains:composer.lock"
   ],
   "contributes": {
     "commands": [

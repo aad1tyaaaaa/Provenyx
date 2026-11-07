@@ -4,7 +4,7 @@
  VS Code                                   Browser
 ┌──────────────────────────┐             ┌──────────────────────────┐
 │ Provenyx extension (TS)  │             │ Next.js dashboard :3000  │
-│  • find package-lock.json│             │  • /dashboard /scans     │
+│  • find dependency locks │             │  • /dashboard /scans     │
 │  • validate JSON locally │             │  • /settings             │
 │  • ask consent ──────────┼──POST───┐   │  • health status         │
 │  • sidebar TreeView      │         │   └────────────┬─────────────┘
@@ -31,7 +31,7 @@
 
 | Path | Stack | Role |
 | --- | --- | --- |
-| `extension/` | TypeScript, VS Code API, esbuild | Primary product. Finds and validates lockfiles, obtains consent, submits to the API, shows state in a TreeView. |
+| `extension/` | TypeScript, VS Code API, esbuild | Primary product. Finds and validates npm, pnpm, and Composer lockfiles, obtains consent, submits to the API, shows state in a TreeView. |
 | `backend/` | Python 3.11+, FastAPI, Pydantic | Validates submissions; future home of parsing, graph building, detection, and verification. |
 | `frontend/` | Next.js App Router, Tailwind v4, shadcn/ui conventions, Lucide | Web dashboard for deeper investigation. |
 | `contracts/` | Solidity, Hardhat 3, viem | Registry of approved release-manifest hashes. Local network only. |
@@ -41,7 +41,7 @@ The monorepo does **not** use npm workspaces: each JS package has its own `node_
 
 ## Trust boundaries and safety rules
 
-- The extension reads `package-lock.json` with `vscode.workspace.fs` and never runs `npm`, package code, or lifecycle scripts.
+- The extension reads `package-lock.json`, `pnpm-lock.yaml`, or `composer.lock` with `vscode.workspace.fs` and never runs a package manager, package code, or lifecycle scripts. Composer scans optionally read dependency declarations from adjacent `composer.json` to identify direct packages.
 - Nothing leaves the machine without a modal confirmation for each scan, naming the destination URL. Only the lockfile is sent.
 - The backend treats lockfile content as untrusted data: size-capped body (checked while streaming), strict schema, no echo of input in errors.
 - Error messages shown to users never include lockfile contents.

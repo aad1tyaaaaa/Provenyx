@@ -35,6 +35,21 @@ def test_batches_are_split_at_the_batch_size():
     assert sorted(sizes) == [1, 2]
 
 
+def test_osv_client_uses_requested_ecosystem_and_keeps_caches_separate():
+    ecosystems: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        queries = json.loads(request.content)["queries"]
+        ecosystems.extend(query["package"]["ecosystem"] for query in queries)
+        return httpx.Response(200, json={"results": [{} for _ in queries]})
+
+    client = OsvClient(transport=httpx.MockTransport(handler), retries=0)
+    asyncio.run(client.fetch_many([("vendor/package", "1.0.0")], ecosystem="Packagist"))
+    asyncio.run(client.fetch_many([("vendor/package", "1.0.0")], ecosystem="npm"))
+
+    assert ecosystems == ["Packagist", "npm"]
+
+
 def test_osv_client_distinguishes_no_advisories_from_unavailable():
     empty = OsvClient(transport=osv_transport(), retries=0)
     unavailable = OsvClient(

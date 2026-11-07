@@ -1,5 +1,6 @@
 from collections.abc import Iterator
 from pathlib import Path
+import json
 import sqlite3
 
 import httpx
@@ -125,6 +126,55 @@ def test_scan_preserves_multiple_versions_in_api_graph(api: tuple[TestClient, Sc
     nodes = client.get(f"/api/scans/{scan_id}/graph").json()["nodes"]
 
     assert {node["id"] for node in nodes} == {"a@1.0.0", "shared@1.0.0", "shared@2.0.0"}
+
+
+def test_composer_scan_uses_packagist_osv_without_contacting_npm(tmp_path: Path):
+    ecosystems: list[str] = []
+
+    def osv_handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/querybatch":
+            queries = json.loads(request.content)["queries"]
+            ecosystems.extend(query["package"]["ecosystem"] for query in queries)
+            return httpx.Response(200, json={"results": [{} for _ in queries]})
+        return httpx.Response(404)
+
+    class UnexpectedNpmRegistry(NpmRegistryClient):
+        async def fetch_many(self, releases):
+            raise AssertionError("Composer scans must not query npm")
+
+    service = ScanService(
+        ScanRepository(f"sqlite:///{tmp_path / 'composer.db'}"),
+        UnexpectedNpmRegistry(retries=0),
+        osv=OsvClient(transport=httpx.MockTransport(osv_handler), retries=0),
+    )
+    app.dependency_overrides[get_scan_service] = lambda: service
+    lockfile = {
+        "name": "provenyx/php-demo",
+        "lockfileVersion": 3,
+        "provenyxSource": "composer.lock",
+        "packages": {
+            "": {"dependencies": {"symfony/console": "7.1.3"}},
+            "vendor/symfony/console": {
+                "name": "symfony/console",
+                "version": "7.1.3",
+                "dependencies": {"symfony/string": "7.1.2"},
+            },
+            "vendor/symfony/string": {"name": "symfony/string", "version": "7.1.2"},
+        },
+    }
+
+    with TestClient(app) as client:
+        scan_id = client.post("/api/scans", json={"lockfile": lockfile}).json()["scan_id"]
+        detail = client.get(f"/api/scans/{scan_id}").json()
+        graph = client.get(f"/api/scans/{scan_id}/graph").json()
+    app.dependency_overrides.clear()
+
+    assert detail["status"] == "complete"
+    assert ecosystems == ["Packagist", "Packagist"]
+    assert [(edge["from"], edge["to"]) for edge in graph["edges"]] == [
+        ("symfony/console@7.1.3", "symfony/string@7.1.2")
+    ]
+    assert any("Packagist registry enrichment" in warning for warning in detail["warnings"])
 
 
 def test_registry_failure_is_unknown_metadata_not_scan_failure(tmp_path: Path):

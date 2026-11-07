@@ -129,13 +129,13 @@ async function followScan(tree: FindingsTreeProvider, scanId: string, accessToke
 async function pickLockfile(): Promise<vscode.Uri | undefined> {
   const found = await findLockfiles();
   if (found.length === 0) {
-    void vscode.window.showWarningMessage('Provenyx: No supported dependency lockfile found. Supported files: package-lock.json and pnpm-lock.yaml.');
+    void vscode.window.showWarningMessage('Provenyx: No supported dependency lockfile found. Supported files: package-lock.json, pnpm-lock.yaml, and composer.lock.');
     return undefined;
   }
   if (found.length === 1) return found[0];
   const picked = await vscode.window.showQuickPick(
     found.map((uri) => ({ label: vscode.workspace.asRelativePath(uri), uri })),
-    { placeHolder: 'Select the package-lock.json to scan' },
+    { placeHolder: 'Select a dependency lockfile to scan' },
   );
   return picked?.uri;
 }
