@@ -19,6 +19,9 @@ class ScanRow(Base):
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     project_name: Mapped[str | None] = mapped_column(String(214))
+    ecosystem: Mapped[str] = mapped_column(String(32), nullable=False, default="npm")
+    package_manager: Mapped[str] = mapped_column(String(32), nullable=False, default="npm")
+    component_path: Mapped[str] = mapped_column(String(512), nullable=False, default=".")
     lockfile: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     summary: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     graph: Mapped[dict[str, Any] | None] = mapped_column(JSON)
@@ -59,11 +62,30 @@ class ScanRepository:
         if "simplified" not in existing_columns:
             with self._engine.begin() as connection:
                 connection.execute(text("ALTER TABLE scans ADD COLUMN simplified JSON"))
+        identity_columns = {
+            "ecosystem": ("VARCHAR(32)", "npm"),
+            "package_manager": ("VARCHAR(32)", "npm"),
+            "component_path": ("VARCHAR(512)", "."),
+        }
+        for column, (column_type, default) in identity_columns.items():
+            if column not in existing_columns:
+                with self._engine.begin() as connection:
+                    connection.execute(
+                        text(f"ALTER TABLE scans ADD COLUMN {column} {column_type} DEFAULT '{default}' NOT NULL")
+                    )
         for index in ScanRow.__table__.indexes:
             index.create(self._engine, checkfirst=True)
 
     def create(
-        self, scan_id: str, project_name: str | None, lockfile: dict[str, Any], owner_id: str | None = None
+        self,
+        scan_id: str,
+        project_name: str | None,
+        lockfile: dict[str, Any],
+        owner_id: str | None = None,
+        *,
+        ecosystem: str = "npm",
+        package_manager: str = "npm",
+        component_path: str = ".",
     ) -> None:
         with self._sessions.begin() as session:
             session.add(
@@ -73,6 +95,9 @@ class ScanRepository:
                     status="accepted",
                     created_at=datetime.now(timezone.utc),
                     project_name=project_name,
+                    ecosystem=ecosystem,
+                    package_manager=package_manager,
+                    component_path=component_path,
                     lockfile=lockfile,
                     warnings=[],
                 )
@@ -168,7 +193,15 @@ class ScanRepository:
             )
 
     def find_latest_complete(
-        self, project_name: str, *, owner_id: str | None, before: datetime, exclude_scan_id: str
+        self,
+        project_name: str,
+        *,
+        owner_id: str | None,
+        before: datetime,
+        exclude_scan_id: str,
+        ecosystem: str = "npm",
+        package_manager: str = "npm",
+        component_path: str = ".",
     ) -> ScanRow | None:
         """The most recent completed scan of the project created strictly before `before`.
 
@@ -180,6 +213,9 @@ class ScanRepository:
                 .where(
                     ScanRow.project_name == project_name,
                     ScanRow.owner_id == owner_id,
+                    ScanRow.ecosystem == ecosystem,
+                    ScanRow.package_manager == package_manager,
+                    ScanRow.component_path == component_path,
                     ScanRow.status == "complete",
                     ScanRow.scan_id != exclude_scan_id,
                     ScanRow.created_at < before,

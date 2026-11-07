@@ -75,6 +75,9 @@ export interface Scan {
   status: ScanStatus
   created_at: string
   project_name: string | null
+  ecosystem: string
+  package_manager: string
+  component_path: string
   error: string | null
   summary: ScanSummary | null
   simplified?: SimplifiedScanResponse | null
@@ -123,6 +126,7 @@ export interface GraphNode {
   id: string
   name: string
   version: string
+  purl?: string | null
   direct: boolean
   dev?: boolean
   lockfile_paths: string[]
@@ -141,6 +145,9 @@ export interface GraphEdge {
 export interface DependencyGraphData {
   scan_id: string
   status?: ScanStatus
+  ecosystem?: string
+  package_manager?: string
+  component_path?: string
   nodes: GraphNode[]
   edges: GraphEdge[]
   warnings?: string[]

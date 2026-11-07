@@ -153,7 +153,7 @@ export function GitHubProjects() {
 
                 {open && discovery.state === 'error' && <p className="mt-4 text-sm text-danger">{discovery.message}</p>}
                 {open && discovery.state === 'ok' && discovery.paths.length === 0 && (
-                  <p className="mt-4 text-sm text-ink-muted">No package-lock.json was found on {repository.default_branch}.</p>
+                  <p className="mt-4 text-sm text-ink-muted">No supported dependency file was found on {repository.default_branch}.</p>
                 )}
                 {open && discovery.state === 'ok' && discovery.paths.length > 0 && (
                   <div className="mt-4 space-y-2 border-t border-line pt-4">

@@ -31,7 +31,7 @@
 
 | Path | Stack | Role |
 | --- | --- | --- |
-| `extension/` | TypeScript, VS Code API, esbuild | Primary product. Finds and validates npm, pnpm, and Composer lockfiles, obtains consent, submits to the API, shows state in a TreeView. |
+| `extension/` | TypeScript, VS Code API, esbuild | Primary product. Normalizes supported dependency files across ten language ecosystems, obtains consent, submits dependency snapshots, and shows state in a TreeView. |
 | `backend/` | Python 3.11+, FastAPI, Pydantic | Validates submissions; future home of parsing, graph building, detection, and verification. |
 | `frontend/` | Next.js App Router, Tailwind v4, shadcn/ui conventions, Lucide | Web dashboard for deeper investigation. |
 | `contracts/` | Solidity, Hardhat 3, viem | Registry of approved release-manifest hashes. Local network only. |
@@ -41,8 +41,8 @@ The monorepo does **not** use npm workspaces: each JS package has its own `node_
 
 ## Trust boundaries and safety rules
 
-- The extension reads `package-lock.json`, `pnpm-lock.yaml`, or `composer.lock` with `vscode.workspace.fs` and never runs a package manager, package code, or lifecycle scripts. Composer scans optionally read dependency declarations from adjacent `composer.json` to identify direct packages.
-- Nothing leaves the machine without a modal confirmation for each scan, naming the destination URL. Only the lockfile is sent.
+- The extension reads supported lockfiles as data with `vscode.workspace.fs` and never runs a package manager, package code, or lifecycle scripts. It may read an adjacent package manifest, such as `package.json`, `composer.json`, or `go.mod`, only to classify direct dependencies.
+- Nothing leaves the machine without a modal confirmation for each scan, naming the destination URL. Only the normalized dependency snapshot is sent; source files are never read or uploaded.
 - The backend treats lockfile content as untrusted data: size-capped body (checked while streaming), strict schema, no echo of input in errors.
 - Error messages shown to users never include lockfile contents.
 - Registry requests retrieve public metadata only, use bounded concurrency/timeouts/retries, and report failures as unavailable rather than inventing values.

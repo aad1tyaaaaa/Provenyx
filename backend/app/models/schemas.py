@@ -3,7 +3,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.parsers.ecosystems import SUPPORTED_DEPENDENCY_FILES
+
 SUPPORTED_LOCKFILE_VERSIONS = (1, 2, 3)
+SUPPORTED_LOCKFILE_NAMES = SUPPORTED_DEPENDENCY_FILES
 
 
 class HealthResponse(BaseModel):
@@ -42,6 +45,28 @@ class ScanRequest(BaseModel):
     lockfile: Lockfile
     project_name: str | None = Field(default=None, max_length=214)
     client: str | None = Field(default=None, max_length=64, description="e.g. 'vscode-extension/0.1.0'")
+
+
+class DependencyFileScanRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    filename: str = Field(min_length=1, max_length=128)
+    content: str
+    auxiliaries: dict[str, str] = Field(default_factory=dict)
+    project_name: str | None = Field(default=None, max_length=214)
+    client: str | None = Field(default=None, max_length=64)
+    component_path: str = Field(default=".", max_length=1024)
+
+    @model_validator(mode="after")
+    def check_file_names(self) -> "DependencyFileScanRequest":
+        if self.filename not in SUPPORTED_DEPENDENCY_FILES:
+            raise ValueError(f"filename must be one of: {', '.join(SUPPORTED_DEPENDENCY_FILES)}")
+        if any(name not in {"package.json", "composer.json", "go.mod"} for name in self.auxiliaries):
+            raise ValueError("unsupported auxiliary manifest")
+        parts = self.component_path.split("/")
+        if self.component_path.startswith("/") or any(part in ("", "..") for part in parts):
+            raise ValueError("component_path must be repository-relative")
+        return self
 
 
 class ScanAccepted(BaseModel):
@@ -91,8 +116,8 @@ class GitHubScanRequest(BaseModel):
         parts = self.lockfile_path.split("/")
         if self.lockfile_path.startswith("/") or any(part in ("", ".", "..") for part in parts):
             raise ValueError("lockfile_path must be a repository-relative path")
-        if parts[-1] != "package-lock.json":
-            raise ValueError("lockfile_path must point to package-lock.json")
+        if parts[-1] not in SUPPORTED_LOCKFILE_NAMES:
+            raise ValueError(f"lockfile_path must point to one of: {', '.join(SUPPORTED_LOCKFILE_NAMES)}")
         return self
 
 
@@ -108,6 +133,9 @@ class ScanDetail(BaseModel):
     status: Literal["accepted", "analyzing", "complete", "failed"]
     created_at: datetime
     project_name: str | None
+    ecosystem: str = "npm"
+    package_manager: str = "npm"
+    component_path: str = "."
     summary: ScanSummary | None = None
     simplified: dict[str, Any] | None = None
     warnings: list[str] = Field(default_factory=list)
@@ -131,6 +159,7 @@ class GraphNode(BaseModel):
     id: str
     name: str
     version: str
+    purl: str | None = None
     direct: bool
     lockfile_paths: list[str]
     resolved_urls: list[str] = Field(default_factory=list)
@@ -150,6 +179,9 @@ class GraphEdge(BaseModel):
 class ScanGraph(BaseModel):
     scan_id: str
     status: Literal["accepted", "analyzing", "complete", "failed"]
+    ecosystem: str = "npm"
+    package_manager: str = "npm"
+    component_path: str = "."
     nodes: list[GraphNode] = Field(default_factory=list)
     edges: list[GraphEdge] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)

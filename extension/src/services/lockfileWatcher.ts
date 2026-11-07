@@ -5,7 +5,9 @@ const DEBOUNCE_MS = 1500;
 
 /** Starts the consent-gated scan flow after a supported dependency lockfile changes. */
 export function createLockfileWatcher(onChange: (uri: vscode.Uri) => void): vscode.Disposable {
-  const watcher = vscode.workspace.createFileSystemWatcher('**/{package-lock.json,pnpm-lock.yaml,composer.lock}');
+  const watcher = vscode.workspace.createFileSystemWatcher(
+    '**/{package-lock.json,pnpm-lock.yaml,yarn.lock,bun.lock,composer.lock,Pipfile.lock,requirements.txt,go.sum,Cargo.lock,pom.xml,gradle.lockfile,packages.lock.json,Gemfile.lock,pubspec.lock,Package.resolved}',
+  );
   const pending = new Map<string, NodeJS.Timeout>();
 
   const scan = (uri: vscode.Uri) => {

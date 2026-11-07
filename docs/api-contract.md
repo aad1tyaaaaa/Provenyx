@@ -16,7 +16,7 @@ Sends and returns no project data. The extension calls it on activation and befo
 
 ## `POST /api/scans`
 
-Submit an npm lockfile. The API validates it, stores a local snapshot (SQLite), and starts dependency analysis in a background task. Poll `GET /api/scans/{scan_id}` for progress.
+Submit an npm lockfile or an ecosystem-normalized dependency snapshot produced by the extension. The API validates it, stores a local snapshot (SQLite), and starts dependency analysis in a background task. Poll `GET /api/scans/{scan_id}` for progress.
 
 Request headers: `Content-Type: application/json` (otherwise `415`).
 
@@ -32,7 +32,7 @@ Request body (max 10 MiB, configurable with `PROVENYX_MAX_SCAN_BYTES`; otherwise
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
-| `lockfile` | object | yes | Parsed `package-lock.json`. Unknown keys are allowed and passed through. |
+| `lockfile` | object | yes | Parsed `package-lock.json` or a normalized dependency snapshot. Unknown keys are allowed and passed through. |
 | `lockfile.lockfileVersion` | integer | yes | `1`, `2` or `3`. |
 | `lockfile.packages` | object | for v2/v3 | |
 | `lockfile.dependencies` | object | for v1 | |
@@ -72,10 +72,13 @@ Browser access is restricted to `PROVENYX_CORS_ORIGINS` (default `http://localho
 | `GET /api/github/auth/callback` | Validate OAuth state and create the encrypted session cookie |
 | `POST /api/github/auth/logout` | Delete the GitHub session cookie |
 | `GET /api/github/repositories` | List all repositories accessible through the connected account |
-| `GET /api/github/repositories/{owner}/{repository}/lockfiles` | Discover root and nested `package-lock.json` files on the default branch |
-| `POST /api/github/scans` | Fetch one selected lockfile and submit it to the normal scan pipeline |
+| `GET /api/github/repositories/{owner}/{repository}/lockfiles` | Discover root and nested supported dependency files on the default branch |
+| `POST /api/github/scans` | Fetch and normalize one selected supported dependency file |
+| `POST /api/dependency-scans` | Normalize and scan a manually uploaded native dependency file |
 
-`POST /api/github/scans` accepts `{ "owner": "org", "repository": "project", "lockfile_path": "package-lock.json" }`. The API fetches only that file; it does not clone the repository, install dependencies, or execute project code. GitHub endpoints return `401` until an account is connected.
+GitHub discovery supports the same filenames as the VS Code extension. `POST /api/github/scans` accepts `{ "owner": "org", "repository": "project", "lockfile_path": "path/to/requirements.txt" }`. It fetches only the selected dependency file and an optional adjacent manifest used for directness; it does not clone the repository, install dependencies, or execute project code. GitHub endpoints return `401` until an account is connected.
+
+`POST /api/dependency-scans` accepts `{ "filename", "content", "auxiliaries", "project_name", "client", "component_path" }`. `auxiliaries` may contain `package.json`, `composer.json`, or `go.mod`; source files are rejected.
 
 ## Scan results (implemented — Phases 3–4, owner: Omkar)
 
@@ -98,6 +101,9 @@ Unknown `scan_id` → `404 { "detail": "Scan not found" }`. Clients treat `404`/
   "status": "complete",            // accepted | analyzing | complete | failed
   "created_at": "2026-10-12T10:00:00Z",
   "project_name": "my-app",        // or null
+  "ecosystem": "npm",
+  "package_manager": "npm",
+  "component_path": ".",
   "summary": { "packages": 120, "direct": 8, "transitive": 112, "findings": 2 },   // null until complete
   "warnings": ["Could not resolve 'x' declared by y@1.0.0"],   // things the analysis could not determine
   "error": null                    // reason when status = failed
@@ -112,8 +118,11 @@ Node `id` is `name@version`, so multiple installed versions stay distinct. **The
 {
   "scan_id": "uuid",
   "status": "complete",
+  "ecosystem": "npm",
+  "package_manager": "npm",
+  "component_path": ".",
   "nodes": [
-    { "id": "ms@2.1.3", "name": "ms", "version": "2.1.3", "direct": true,
+    { "id": "ms@2.1.3", "name": "ms", "version": "2.1.3", "purl": "pkg:npm/ms@2.1.3", "direct": true,
       "lockfile_paths": ["node_modules/ms"],
       "resolved_urls": ["https://registry.npmjs.org/ms/-/ms-2.1.3.tgz"],
       "lockfile_integrities": ["sha512-…"],

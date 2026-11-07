@@ -45,7 +45,7 @@ Create a GitHub OAuth App under **Settings → Developer settings → OAuth Apps
 
 Then set `PROVENYX_GITHUB_CLIENT_ID`, `PROVENYX_GITHUB_CLIENT_SECRET`, and `PROVENYX_GITHUB_SESSION_SECRET` in `backend/.env`. Generate the session secret with `openssl rand -hex 32`. Restart the backend, open <http://localhost:3000/github>, and connect GitHub.
 
-The OAuth token is AES-GCM encrypted in an HTTP-only cookie and expires after eight hours. Provenyx uses it only for read requests: listing accessible repositories, discovering `package-lock.json` files, and fetching the selected lockfile. GitHub's classic `repo` OAuth scope is broader than read-only because OAuth Apps do not offer a private-repository read-only scope; use a dedicated OAuth App and review that tradeoff before production deployment.
+The OAuth token is AES-GCM encrypted in an HTTP-only cookie and expires after eight hours. Provenyx uses it only for read requests: listing accessible repositories, discovering `package-lock.json` and `composer.lock` files, and fetching the selected lockfile (plus, for Composer, the adjacent `composer.json` when present). GitHub's classic `repo` OAuth scope is broader than read-only because OAuth Apps do not offer a private-repository read-only scope; use a dedicated OAuth App and review that tradeoff before production deployment.
 
 ## 2. Start the FastAPI backend
 

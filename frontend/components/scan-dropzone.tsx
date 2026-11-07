@@ -8,11 +8,11 @@ import { ErrorState } from '@/components/states'
 import { apiPost } from '@/lib/api'
 import { API_BASE_URL } from '@/lib/config'
 import { formatBytes } from '@/lib/format'
-import { MAX_LOCKFILE_BYTES, parseLockfile, type ParsedLockfile } from '@/lib/lockfile'
+import { DEPENDENCY_FILE_ACCEPT, parseDependencyFiles, type ParsedDependencyFiles } from '@/lib/lockfile'
 import type { ScanAccepted } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
-type Selected = { name: string; size: number; lock: ParsedLockfile }
+type Selected = ParsedDependencyFiles
 type Submit = { state: 'idle' } | { state: 'sending' } | { state: 'done'; res: ScanAccepted } | { state: 'error'; message: string }
 
 export function ScanDropzone() {
@@ -23,14 +23,13 @@ export function ScanDropzone() {
   const [consent, setConsent] = useState(false)
   const [submit, setSubmit] = useState<Submit>({ state: 'idle' })
 
-  async function choose(f: File | undefined) {
+  async function choose(files: File[]) {
     setFile(null)
     setFileError(null)
     setSubmit({ state: 'idle' })
-    if (!f) return
-    if (f.size > MAX_LOCKFILE_BYTES) return setFileError(`${f.name} is ${formatBytes(f.size)}; the limit is 10 MB.`)
+    if (files.length === 0) return
     try {
-      setFile({ name: f.name, size: f.size, lock: parseLockfile(await f.text()) })
+      setFile(await parseDependencyFiles(files))
     } catch (err) {
       setFileError((err as Error).message)
     }
@@ -39,9 +38,10 @@ export function ScanDropzone() {
   async function send() {
     if (!file || !consent) return
     setSubmit({ state: 'sending' })
-    const r = await apiPost<ScanAccepted>('/api/scans', {
-      lockfile: file.lock.data,
-      project_name: typeof file.lock.data.name === 'string' ? file.lock.data.name : undefined,
+    const r = await apiPost<ScanAccepted>('/api/dependency-scans', {
+      filename: file.filename,
+      content: file.content,
+      auxiliaries: file.auxiliaries,
       client: 'dashboard/0.1.0',
     })
     if (r.state === 'ok') setSubmit({ state: 'done', res: r.data })
@@ -73,8 +73,8 @@ export function ScanDropzone() {
       <div className="flex items-start gap-4">
         <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-mint-soft text-leaf"><Upload className="size-5" aria-hidden /></span>
         <div>
-          <h2 className="font-semibold text-ink">Upload a package-lock.json</h2>
-          <p className="mt-1 text-sm text-ink-muted">The file is checked in your browser first. Nothing is sent until you confirm below.</p>
+          <h2 className="font-semibold text-ink">Upload a dependency file</h2>
+          <p className="mt-1 text-sm text-ink-muted">Choose one supported dependency file and optional adjacent manifest. Nothing is sent until you confirm below.</p>
         </div>
       </div>
 
@@ -82,16 +82,16 @@ export function ScanDropzone() {
         htmlFor={inputId}
         onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
         onDragLeave={() => setDragging(false)}
-        onDrop={(e) => { e.preventDefault(); setDragging(false); void choose(e.dataTransfer.files[0]) }}
+        onDrop={(e) => { e.preventDefault(); setDragging(false); void choose(Array.from(e.dataTransfer.files)) }}
         className={cn(
           'mt-6 flex min-h-40 cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed px-6 text-center transition focus-within:outline-2 focus-within:outline-leaf',
           dragging ? 'border-leaf bg-ink/5' : 'border-ink/20 bg-ink/5 hover:border-leaf hover:bg-ink/5',
         )}
       >
-        <input id={inputId} className="sr-only" type="file" accept="application/json,.json" onChange={(e) => void choose(e.target.files?.[0])} />
+        <input id={inputId} className="sr-only" type="file" multiple accept={DEPENDENCY_FILE_ACCEPT} onChange={(e) => void choose(Array.from(e.target.files ?? []))} />
         <FileCode2 className="size-6 text-leaf" aria-hidden />
-        <span className="mt-3 text-sm font-semibold text-ink/70">Drop a package-lock.json here, or choose a file</span>
-        <span className="mt-1 text-xs text-ink-muted">JSON, up to 10 MB</span>
+        <span className="mt-3 text-sm font-semibold text-ink/70">Drop a supported dependency file here, or choose files</span>
+        <span className="mt-1 text-xs text-ink-muted">Dependency file plus optional manifest, up to 10 MB total</span>
       </label>
 
       {fileError && <div className="mt-4"><ErrorState title="This file can't be scanned">{fileError}</ErrorState></div>}
@@ -99,9 +99,10 @@ export function ScanDropzone() {
       {file && (
         <div className="mt-4 flex items-center justify-between gap-3 rounded-lg bg-ink/5 px-4 py-3 text-sm">
           <div className="min-w-0">
-            <p className="truncate font-semibold text-ok">{file.name}</p>
+            <p className="truncate font-semibold text-ok">{file.filename}</p>
             <p className="text-xs text-ink-muted">
-              {formatBytes(file.size)} · lockfileVersion {file.lock.data.lockfileVersion} · {file.lock.packageCount} package entries
+              {formatBytes(file.totalSize)}{file.packageCount !== undefined ? ` · ${file.packageCount} package entries` : ''}
+              {Object.keys(file.auxiliaries).length > 0 ? ` · ${Object.keys(file.auxiliaries).join(', ')}` : ''}
             </p>
           </div>
           <button type="button" onClick={() => { setFile(null); setConsent(false) }} className="rounded-md p-1.5 text-ink-muted hover:bg-ink/10 hover:text-ink" aria-label="Remove file">

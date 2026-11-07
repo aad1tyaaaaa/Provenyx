@@ -10,7 +10,7 @@ export default function GitHubProjectsPage() {
       <PageHeader
         eyebrow="Repository access"
         title="GitHub projects"
-        description="Choose any accessible repository and analyze its npm lockfile with the same Provenyx pipeline used by local scans."
+        description="Choose any accessible repository and analyze a supported dependency file with the same Provenyx pipeline used by local scans."
       />
       <GitHubProjects />
     </div>

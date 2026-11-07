@@ -2,10 +2,10 @@
 
 ## Unreleased
 
-- Add PHP Composer support for `composer.lock`, using adjacent `composer.json` declarations to classify direct dependencies.
-- Query OSV with the `Packagist` ecosystem and avoid npm metadata requests for Composer packages.
-
-## Unreleased
+- Add local dependency adapters for npm, pnpm, Yarn, Bun, Composer, Pipenv, requirements files, Go modules, Cargo, Maven, Gradle, NuGet, Bundler, Pub, and Swift Package Manager.
+- Isolate baselines by ecosystem, package manager, and workspace component, and attach Package URLs to graph nodes.
+- Query OSV in each package ecosystem and reserve npm registry metadata rules for npm packages.
+- Skip uncertain versions and incomplete relationships with explicit warnings instead of guessing.
 
 - Ignore the legacy extension's `http://localhost:8000` default for `provenyx.apiBaseUrl`.
 - Keep activating when the legacy extension already registered the Provenyx commands.

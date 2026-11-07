@@ -35,7 +35,19 @@
     "onStartupFinished",
     "workspaceContains:package-lock.json",
     "workspaceContains:pnpm-lock.yaml",
-    "workspaceContains:composer.lock"
+    "workspaceContains:yarn.lock",
+    "workspaceContains:bun.lock",
+    "workspaceContains:composer.lock",
+    "workspaceContains:Pipfile.lock",
+    "workspaceContains:requirements.txt",
+    "workspaceContains:go.sum",
+    "workspaceContains:Cargo.lock",
+    "workspaceContains:pom.xml",
+    "workspaceContains:gradle.lockfile",
+    "workspaceContains:packages.lock.json",
+    "workspaceContains:Gemfile.lock",
+    "workspaceContains:pubspec.lock",
+    "workspaceContains:Package.resolved"
   ],
   "contributes": {
     "commands": [
@@ -176,6 +188,9 @@
     "theme": "dark"
   },
   "dependencies": {
+    "@yarnpkg/parsers": "^3.1.0",
+    "fast-xml-parser": "^5.12.0",
+    "jsonc-parser": "^3.3.1",
     "yaml": "^2.9.1"
   }
 }

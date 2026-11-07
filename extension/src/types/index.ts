@@ -35,6 +35,9 @@ export interface Scan {
   status: ScanStatus;
   created_at: string;
   project_name: string | null;
+  ecosystem: string;
+  package_manager: string;
+  component_path: string;
   error: string | null;
   summary: { packages: number; direct: number; transitive: number; findings: number } | null;
   warnings?: string[];

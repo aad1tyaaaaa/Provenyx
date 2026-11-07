@@ -24,6 +24,7 @@ from app.blockchain.registry import ReleaseRegistryReader
 from app.blockchain.verify import ReleaseVerifier
 from app.graph.comparison import compare_graphs
 from app.models.schemas import (
+    DependencyFileScanRequest,
     ErrorResponse,
     Finding,
     GateReport,
@@ -48,6 +49,7 @@ from app.models.schemas import (
     VerifyRequest,
     VersionChangeResponse,
 )
+from app.parsers.ecosystems import AUXILIARY_FILES, normalize_dependency_file
 from app.parsers.npm_registry import NpmRegistryClient
 from app.services import ScanService
 
@@ -374,6 +376,8 @@ async def create_github_scan(
     service: Annotated[ScanService, Depends(get_scan_service)],
 ) -> ScanAccepted:
     token, owner_id = await _github_credentials(request, github)
+    lockfile_name = body.lockfile_path.rsplit("/", 1)[-1]
+    lockfile_directory = body.lockfile_path.rsplit("/", 1)[0] if "/" in body.lockfile_path else "."
     try:
         content = await github.fetch_lockfile(
             token, body.owner, body.repository, body.lockfile_path, settings.max_scan_bytes
@@ -381,21 +385,79 @@ async def create_github_scan(
     except GitHubApiError as exc:
         raise _github_error(exc)
     try:
+        auxiliaries: dict[str, bytes] = {}
+        for auxiliary_name in AUXILIARY_FILES.get(lockfile_name, ()):
+            manifest_path = (
+                f"{lockfile_directory}/{auxiliary_name}" if lockfile_directory != "." else auxiliary_name
+            )
+            try:
+                auxiliaries[auxiliary_name] = await github.fetch_lockfile(
+                    token, body.owner, body.repository, manifest_path, settings.max_scan_bytes
+                )
+            except GitHubApiError:
+                # Adjacent manifests improve directness but are not required to scan exact releases.
+                pass
+        raw_lockfile = normalize_dependency_file(lockfile_name, content, auxiliaries)
+        raw_lockfile["provenyxComponentPath"] = lockfile_directory
         lockfile = ScanRequest.model_validate(
             {
-                "lockfile": json.loads(content),
+                "lockfile": raw_lockfile,
                 "project_name": f"{body.owner}/{body.repository}",
                 "client": "github/0.1.0",
             }
         )
-    except (json.JSONDecodeError, UnicodeDecodeError, ValidationError) as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Repository package-lock.json is invalid") from exc
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError, ValidationError) as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"Repository {lockfile_name} is invalid") from exc
     scan_id = service.create_scan(lockfile.lockfile.model_dump(mode="json"), lockfile.project_name, owner_id)
     background_tasks.add_task(service.analyze_scan, scan_id)
     return ScanAccepted(
         scan_id=scan_id,
         status="accepted",
         message="GitHub lockfile received. Dependency analysis has started.",
+    )
+
+
+@router.post(
+    "/api/dependency-scans",
+    response_model=ScanAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
+    responses={413: {"model": ErrorResponse}, 415: {"model": ErrorResponse}},
+    dependencies=[Depends(limit_submissions)],
+)
+async def create_dependency_file_scan(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    github: Annotated[GitHubService, Depends(get_github_service)],
+    service: Annotated[ScanService, Depends(get_scan_service)],
+) -> ScanAccepted:
+    if not request.headers.get("content-type", "").startswith("application/json"):
+        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "Content-Type must be application/json")
+    submission = _validate(
+        DependencyFileScanRequest,
+        await _read_capped_body(request, 2 * settings.max_scan_bytes),
+    )
+    try:
+        snapshot = normalize_dependency_file(submission.filename, submission.content, submission.auxiliaries)
+        snapshot["provenyxComponentPath"] = submission.component_path
+        validated = ScanRequest.model_validate(
+            {
+                "lockfile": snapshot,
+                "project_name": submission.project_name or snapshot.get("name"),
+                "client": submission.client,
+            }
+        )
+    except (UnicodeDecodeError, ValueError, ValidationError) as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            f"{submission.filename} is invalid: {exc}",
+        ) from exc
+    _, owner_id = await _github_credentials(request, github)
+    scan_id = service.create_scan(validated.lockfile.model_dump(mode="json"), validated.project_name, owner_id)
+    background_tasks.add_task(service.analyze_scan, scan_id)
+    return ScanAccepted(
+        scan_id=scan_id,
+        status="accepted",
+        message="Dependency file received. Dependency analysis has started.",
     )
 
 
@@ -486,6 +548,9 @@ async def get_scan(
         status=row.status,
         created_at=row.created_at,
         project_name=row.project_name,
+        ecosystem=row.ecosystem,
+        package_manager=row.package_manager,
+        component_path=row.component_path,
         summary=row.summary,
         simplified=row.simplified,
         warnings=row.warnings,
@@ -508,6 +573,9 @@ async def list_scans(
             status=row.status,
             created_at=row.created_at,
             project_name=row.project_name,
+            ecosystem=row.ecosystem,
+            package_manager=row.package_manager,
+            component_path=row.component_path,
             summary=row.summary,
             simplified=row.simplified,
             warnings=row.warnings,
@@ -529,7 +597,14 @@ async def get_scan_graph(
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Scan not found")
     if row.graph is None:
-        return ScanGraph(scan_id=row.scan_id, status=row.status, warnings=row.warnings)
+        return ScanGraph(
+            scan_id=row.scan_id,
+            status=row.status,
+            ecosystem=row.ecosystem,
+            package_manager=row.package_manager,
+            component_path=row.component_path,
+            warnings=row.warnings,
+        )
     return ScanGraph.model_validate(row.graph)
 
 
@@ -594,7 +669,13 @@ async def _execute_scan_simplification(
     comparison: ScanComparisonResponse | None = None
     if row.project_name and row.graph:
         baseline_row = service.repository.find_latest_complete(
-            row.project_name, owner_id=row.owner_id, before=row.created_at, exclude_scan_id=scan_id
+            row.project_name,
+            owner_id=row.owner_id,
+            before=row.created_at,
+            exclude_scan_id=scan_id,
+            ecosystem=row.ecosystem,
+            package_manager=row.package_manager,
+            component_path=row.component_path,
         )
         if baseline_row is not None and baseline_row.graph is not None:
             try:

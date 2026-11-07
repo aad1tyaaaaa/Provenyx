@@ -15,6 +15,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from app.core.config import Settings
 from app.models.schemas import GitHubRepository
+from app.parsers.ecosystems import SUPPORTED_DEPENDENCY_FILES
 
 
 class GitHubApiError(RuntimeError):
@@ -200,8 +201,9 @@ class GitHubService:
             if isinstance(item, dict)
             and item.get("type") == "blob"
             and isinstance(item.get("path"), str)
-            and (item["path"] == "package-lock.json" or item["path"].endswith("/package-lock.json"))
+            and item["path"].rsplit("/", 1)[-1] in SUPPORTED_DEPENDENCY_FILES
             and "node_modules/" not in item["path"]
+            and "vendor/" not in item["path"]
         )
 
     async def _get(self, path: str, token: str, params: dict[str, str] | None = None) -> httpx.Response:

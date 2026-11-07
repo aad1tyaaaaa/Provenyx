@@ -28,7 +28,7 @@ from app.models.schemas import (
     ScanSummary,
     VersionChangeResponse,
 )
-from app.parsers.lockfile import ParsedLockfile, ParsedPackage, parse_lockfile
+from app.parsers.lockfile import ParsedLockfile, ParsedPackage, package_purl, parse_lockfile
 from app.parsers.npm_registry import NpmRegistryClient, RegistryMetadata
 
 
@@ -53,7 +53,16 @@ class ScanService:
 
     def create_scan(self, lockfile: dict[str, Any], project_name: str | None, owner_id: str | None = None) -> str:
         scan_id = str(uuid.uuid4())
-        self.repository.create(scan_id, project_name, lockfile, owner_id)
+        parsed = parse_lockfile(lockfile)
+        self.repository.create(
+            scan_id,
+            project_name or parsed.name,
+            lockfile,
+            owner_id,
+            ecosystem=parsed.ecosystem,
+            package_manager=parsed.package_manager,
+            component_path=parsed.component_path,
+        )
         return scan_id
 
     async def analyze_scan(self, scan_id: str) -> None:
@@ -72,8 +81,8 @@ class ScanService:
             analysis_warnings = list(scan_graph.warnings)
             if parsed.ecosystem != "npm":
                 analysis_warnings.append(
-                    "Packagist registry enrichment is not available; publisher, install-script, provenance, and "
-                    "release-timing rules did not run."
+                    f"{parsed.ecosystem} registry enrichment is not available; publisher, install-script, "
+                    "provenance, and release-timing rules did not run."
                 )
             nodes = scan_graph.nodes
             project_name = row.project_name or parsed.name
@@ -92,7 +101,13 @@ class ScanService:
                 )
             baseline_row = (
                 self.repository.find_latest_complete(
-                    project_name, owner_id=row.owner_id, before=row.created_at, exclude_scan_id=scan_id
+                    project_name,
+                    owner_id=row.owner_id,
+                    before=row.created_at,
+                    exclude_scan_id=scan_id,
+                    ecosystem=row.ecosystem,
+                    package_manager=row.package_manager,
+                    component_path=row.component_path,
                 )
                 if project_name
                 else None
@@ -254,6 +269,7 @@ def build_scan_graph(
                 id=node.id,
                 name=node.name,
                 version=node.version,
+                purl=package_purl(parsed.ecosystem, node.name, node.version),
                 direct=node.direct,
                 lockfile_paths=list(node.lockfile_paths),
                 resolved_urls=sorted(evidence["resolved_urls"]),
@@ -267,7 +283,16 @@ def build_scan_graph(
             )
         )
     edges = [GraphEdge(source=edge.source, target=edge.target, type=edge.dependency_type) for edge in graph.edges]
-    return ScanGraph(scan_id=scan_id, status="complete", nodes=nodes, edges=edges, warnings=list(graph.warnings))
+    return ScanGraph(
+        scan_id=scan_id,
+        status="complete",
+        ecosystem=parsed.ecosystem,
+        package_manager=parsed.package_manager,
+        component_path=parsed.component_path,
+        nodes=nodes,
+        edges=edges,
+        warnings=list(graph.warnings),
+    )
 
 
 def _package_evidence(packages: tuple[ParsedPackage, ...]) -> dict[str, dict[str, set[str]]]:

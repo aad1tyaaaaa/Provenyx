@@ -1,4 +1,4 @@
-from app.parsers.lockfile import parse_lockfile
+from app.parsers.lockfile import package_purl, parse_lockfile
 
 
 def test_parse_v3_preserves_scoped_nested_packages_and_evidence():
@@ -98,5 +98,37 @@ def test_normalized_composer_lock_uses_packagist_ecosystem_and_adapter_warnings(
     )
 
     assert parsed.ecosystem == "Packagist"
+    assert parsed.package_manager == "composer"
+    assert parsed.component_path == "."
     assert parsed.packages[0].name == "symfony/console"
     assert parsed.warnings == ("composer.json was not found; direct dependencies are unknown",)
+
+
+def test_source_identity_supports_new_ecosystems_and_rejects_unsafe_component_paths():
+    parsed = parse_lockfile(
+        {
+            "lockfileVersion": 3,
+            "provenyxEcosystem": "PyPI",
+            "provenyxPackageManager": "uv",
+            "provenyxComponentPath": "services/api",
+            "packages": {"": {}},
+        }
+    )
+    unsafe = parse_lockfile(
+        {
+            "lockfileVersion": 3,
+            "provenyxEcosystem": "Go",
+            "provenyxPackageManager": "go-modules",
+            "provenyxComponentPath": "../outside",
+            "packages": {"": {}},
+        }
+    )
+
+    assert (parsed.ecosystem, parsed.package_manager, parsed.component_path) == ("PyPI", "uv", "services/api")
+    assert unsafe.component_path == "."
+
+
+def test_package_urls_are_stable_across_scoped_and_namespaced_ecosystems():
+    assert package_purl("npm", "@scope/package", "1.2.3") == "pkg:npm/%40scope/package@1.2.3"
+    assert package_purl("Packagist", "symfony/console", "7.1.3") == "pkg:composer/symfony/console@7.1.3"
+    assert package_purl("PyPI", "Django", "5.1") == "pkg:pypi/Django@5.1"

@@ -9,7 +9,7 @@ export const metadata: Metadata = { title: 'Dashboard' }
 
 const STEPS = [
   'Install the Provenyx Security extension in VS Code.',
-  'Open a project that contains a package-lock.json.',
+  'Open a project that contains a supported dependency file.',
   'Run “Provenyx: Scan Dependencies” from the Command Palette.',
   'Confirm the prompt to send the lockfile to your Provenyx API.',
 ]

@@ -29,7 +29,7 @@ async function runChecks() {
   }
 
   assert.strictEqual(warnings.length, 1, warnings.join(' | '));
-  assert.match(warnings[0], /No supported dependency lockfile found/);
+  assert.match(warnings[0], /No supported dependency file found/);
   assert.strictEqual(consentShown, false, 'no consent dialog without a lockfile');
   assert.strictEqual(tree.lastScan.kind, 'none');
   console.log('[provenyx smoke] OK: no-lockfile workspace handled');

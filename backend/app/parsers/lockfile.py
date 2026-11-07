@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Mapping
+from urllib.parse import quote
 
 
 DEPENDENCY_FIELDS = {
@@ -30,6 +31,8 @@ class ParsedLockfile:
     version: str | None
     lockfile_version: int
     ecosystem: str
+    package_manager: str
+    component_path: str
     root_dependency_groups: dict[str, dict[str, str]]
     packages: tuple[ParsedPackage, ...]
     warnings: tuple[str, ...] = ()
@@ -74,11 +77,14 @@ def _parse_modern_lockfile(lockfile: Mapping[str, Any], lockfile_version: int) -
             )
         )
 
+    ecosystem, package_manager, component_path = _source_identity(lockfile)
     return ParsedLockfile(
         name=_optional_string(lockfile.get("name")) or _optional_string(root_entry.get("name")),
         version=_optional_string(lockfile.get("version")) or _optional_string(root_entry.get("version")),
         lockfile_version=lockfile_version,
-        ecosystem="Packagist" if lockfile.get("provenyxSource") == "composer.lock" else "npm",
+        ecosystem=ecosystem,
+        package_manager=package_manager,
+        component_path=component_path,
         root_dependency_groups=_dependency_groups(root_entry),
         packages=tuple(packages),
         warnings=tuple(warnings),
@@ -103,6 +109,8 @@ def _parse_v1_lockfile(lockfile: Mapping[str, Any]) -> ParsedLockfile:
         version=_optional_string(lockfile.get("version")),
         lockfile_version=1,
         ecosystem="npm",
+        package_manager="npm",
+        component_path=_component_path(lockfile.get("provenyxComponentPath")),
         root_dependency_groups={"prod": root_dependencies},
         packages=tuple(packages),
         warnings=tuple(warnings),
@@ -179,3 +187,38 @@ def _has_install_script(entry: Mapping[str, Any]) -> bool:
 
 def _optional_string(value: Any) -> str | None:
     return value if isinstance(value, str) and value else None
+
+
+def _source_identity(lockfile: Mapping[str, Any]) -> tuple[str, str, str]:
+    source = lockfile.get("provenyxSource")
+    defaults = {
+        "composer.lock": ("Packagist", "composer"),
+        "pnpm-lock.yaml": ("npm", "pnpm"),
+    }
+    default_ecosystem, default_manager = defaults.get(source, ("npm", "npm"))
+    ecosystem = _optional_string(lockfile.get("provenyxEcosystem")) or default_ecosystem
+    package_manager = _optional_string(lockfile.get("provenyxPackageManager")) or default_manager
+    return ecosystem, package_manager, _component_path(lockfile.get("provenyxComponentPath"))
+
+
+def _component_path(value: Any) -> str:
+    if not isinstance(value, str) or not value or value.startswith(("/", "\\")):
+        return "."
+    parts = value.replace("\\", "/").split("/")
+    return value if all(part not in ("", ".", "..") for part in parts) else "."
+
+
+def package_purl(ecosystem: str, name: str, version: str) -> str:
+    purl_type = {
+        "npm": "npm",
+        "Packagist": "composer",
+        "PyPI": "pypi",
+        "Go": "golang",
+        "crates.io": "cargo",
+        "Maven": "maven",
+        "NuGet": "nuget",
+        "RubyGems": "gem",
+        "Pub": "pub",
+    }.get(ecosystem, ecosystem.lower().replace(" ", "-"))
+    encoded_name = "/".join(quote(part, safe=".-_~") for part in name.split("/"))
+    return f"pkg:{purl_type}/{encoded_name}@{quote(version, safe='.-_~+')}"

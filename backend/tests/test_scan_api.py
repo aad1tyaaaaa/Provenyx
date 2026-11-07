@@ -177,6 +177,35 @@ def test_composer_scan_uses_packagist_osv_without_contacting_npm(tmp_path: Path)
     assert any("Packagist registry enrichment" in warning for warning in detail["warnings"])
 
 
+def test_same_project_in_different_ecosystems_does_not_share_a_baseline(api: tuple[TestClient, ScanService]):
+    client, _ = api
+    npm_lock = {
+        "name": "polyglot-app",
+        "lockfileVersion": 3,
+        "packages": {"": {"dependencies": {"shared": "1.0.0"}}, "node_modules/shared": {"version": "1.0.0"}},
+    }
+    python_lock = {
+        "name": "polyglot-app",
+        "lockfileVersion": 3,
+        "provenyxEcosystem": "PyPI",
+        "provenyxPackageManager": "uv",
+        "provenyxComponentPath": "services/api",
+        "packages": {"": {"dependencies": {"shared": "2.0.0"}}, "packages/shared": {"name": "shared", "version": "2.0.0"}},
+    }
+
+    client.post("/api/scans", json={"lockfile": npm_lock})
+    python_id = client.post("/api/scans", json={"lockfile": python_lock}).json()["scan_id"]
+    detail = client.get(f"/api/scans/{python_id}").json()
+    graph = client.get(f"/api/scans/{python_id}/graph").json()
+
+    assert detail["ecosystem"] == "PyPI"
+    assert detail["package_manager"] == "uv"
+    assert detail["component_path"] == "services/api"
+    assert detail["summary"]["findings"] == 0
+    assert any("No earlier completed scan" in warning for warning in detail["warnings"])
+    assert graph["nodes"][0]["purl"] == "pkg:pypi/shared@2.0.0"
+
+
 def test_registry_failure_is_unknown_metadata_not_scan_failure(tmp_path: Path):
     def timeout(request: httpx.Request) -> httpx.Response:
         raise httpx.ReadTimeout("offline", request=request)

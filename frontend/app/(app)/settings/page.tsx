@@ -8,7 +8,7 @@ export const metadata: Metadata = { title: 'Settings' }
 const EXTENSION_SETTINGS = [
   { key: 'provenyx.apiBaseUrl', value: 'https://devknights.onrender.com', note: 'Where lockfiles are sent after you confirm a scan. Use http://localhost:8000 for a local API.' },
   { key: 'provenyx.dashboardUrl', value: 'https://provenyx.vercel.app', note: 'Opened by “Provenyx: Open Dashboard”.' },
-  { key: 'provenyx.autoScanEnabled', value: 'true', note: 'Offer a scan when package-lock.json changes. Still asks before sending.' },
+  { key: 'provenyx.autoScanEnabled', value: 'true', note: 'Offer a scan when a supported dependency file changes. Still asks before sending.' },
 ]
 
 function Code({ children }: { children: React.ReactNode }) {

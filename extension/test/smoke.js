@@ -215,7 +215,364 @@ snapshots:
     assert.ok(!api.lastRequestBody.includes(phpSourceMarker), 'PHP source must never be submitted');
     api.close();
 
-    // 6. Backend offline: no crash, clear state.
+    // 6. Python Pipenv: exact default/development releases are retained with hashes.
+    api = await startFakeApi('full');
+    await useApi(`http://127.0.0.1:${api.address().port}`);
+    const pipfilePath = vscode.Uri.joinPath(vscode.workspace.workspaceFolders[0].uri, 'Pipfile.lock');
+    await vscode.workspace.fs.writeFile(pipfilePath, Buffer.from(JSON.stringify({
+      _meta: { requires: { python_version: '3.12' } },
+      default: { requests: { version: '==2.32.3', hashes: ['sha256:requests'] }, unpinned: { version: '*' } },
+      develop: { pytest: { version: '==8.3.2' } },
+    })));
+    try {
+      await vscode.commands.executeCommand('provenyx.scanDependencies', pipfilePath);
+    } finally {
+      await vscode.workspace.fs.delete(pipfilePath);
+    }
+    assert.strictEqual(api.lastLockfile.provenyxEcosystem, 'PyPI');
+    assert.strictEqual(api.lastLockfile.provenyxPackageManager, 'pipenv');
+    assert.deepStrictEqual(api.lastLockfile.packages[''].dependencies, { requests: '2.32.3' });
+    assert.deepStrictEqual(api.lastLockfile.packages[''].devDependencies, { pytest: '8.3.2' });
+    assert.ok(api.lastLockfile.provenyxWarnings.some((warning) => warning.includes('unpinned')));
+    api.close();
+
+    // 7. Python requirements: only exact pins are scanned and conflicting duplicates are explicit.
+    api = await startFakeApi('full');
+    await useApi(`http://127.0.0.1:${api.address().port}`);
+    const requirementsPath = vscode.Uri.joinPath(vscode.workspace.workspaceFolders[0].uri, 'requirements.txt');
+    await vscode.workspace.fs.writeFile(requirementsPath, Buffer.from([
+      'Django==5.1.1',
+      'requests[security]==2.32.3; python_version >= "3.10"',
+      'flask>=3.0',
+      'django==4.2.0',
+      'urllib3==2.*',
+      '',
+    ].join('\n')));
+    try {
+      await vscode.commands.executeCommand('provenyx.scanDependencies', requirementsPath);
+    } finally {
+      await vscode.workspace.fs.delete(requirementsPath);
+    }
+    assert.deepStrictEqual(api.lastLockfile.packages[''].dependencies, { Django: '5.1.1', requests: '2.32.3' });
+    assert.ok(api.lastLockfile.provenyxWarnings.some((warning) => warning.includes('line 3')));
+    assert.ok(api.lastLockfile.provenyxWarnings.some((warning) => warning.includes('conflicting requirement')));
+    assert.ok(api.lastLockfile.provenyxWarnings.some((warning) => warning.includes('line 5')));
+    api.close();
+
+    // 8. Go modules: go.mod identifies direct modules and /go.mod checksum rows are ignored.
+    api = await startFakeApi('full');
+    await useApi(`http://127.0.0.1:${api.address().port}`);
+    const goSumPath = vscode.Uri.joinPath(vscode.workspace.workspaceFolders[0].uri, 'go.sum');
+    const goModPath = vscode.Uri.joinPath(vscode.workspace.workspaceFolders[0].uri, 'go.mod');
+    await vscode.workspace.fs.writeFile(goModPath, Buffer.from('module example.com/demo\n\ngo 1.23\n\nrequire github.com/google/uuid v1.6.0\n'));
+    await vscode.workspace.fs.writeFile(goSumPath, Buffer.from([
+      'github.com/google/uuid v1.6.0 h1:module',
+      'github.com/google/uuid v1.6.0/go.mod h1:manifest',
+      'golang.org/x/text v0.18.0 h1:transitive',
+      '',
+    ].join('\n')));
+    try {
+      await vscode.commands.executeCommand('provenyx.scanDependencies', goSumPath);
+    } finally {
+      await vscode.workspace.fs.delete(goSumPath);
+      await vscode.workspace.fs.delete(goModPath);
+    }
+    assert.strictEqual(api.lastLockfile.provenyxEcosystem, 'Go');
+    assert.deepStrictEqual(api.lastLockfile.packages[''].dependencies, { 'github.com/google/uuid': 'v1.6.0' });
+    assert.strictEqual(Object.values(api.lastLockfile.packages).filter((entry) => entry.version).length, 2);
+    api.close();
+
+    // 9. Rust Cargo: workspace roots are excluded and exact registry dependency edges are retained.
+    api = await startFakeApi('full');
+    await useApi(`http://127.0.0.1:${api.address().port}`);
+    const cargoPath = vscode.Uri.joinPath(vscode.workspace.workspaceFolders[0].uri, 'Cargo.lock');
+    await vscode.workspace.fs.writeFile(cargoPath, Buffer.from(`version = 3
+
+[[package]]
+name = "demo"
+version = "0.1.0"
+dependencies = [
+ "serde 1.0.210",
+]
+
+[[package]]
+name = "serde"
+version = "1.0.210"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "serde-checksum"
+dependencies = [
+ "serde_derive 1.0.210",
+]
+
+[[package]]
+name = "serde_derive"
+version = "1.0.210"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "derive-checksum"
+`));
+    try {
+      await vscode.commands.executeCommand('provenyx.scanDependencies', cargoPath);
+    } finally {
+      await vscode.workspace.fs.delete(cargoPath);
+    }
+    assert.strictEqual(api.lastLockfile.provenyxEcosystem, 'crates.io');
+    assert.deepStrictEqual(api.lastLockfile.packages[''].dependencies, { serde: '1.0.210' });
+    assert.ok(!Object.values(api.lastLockfile.packages).some((entry) => entry.name === 'demo'));
+    assert.ok(Object.values(api.lastLockfile.packages).some(
+      (entry) => entry.name === 'serde' && entry.dependencies.serde_derive === '1.0.210',
+    ));
+    api.close();
+
+    // 10. Maven: exact direct dependencies are retained; properties and ranges are never guessed.
+    api = await startFakeApi('full');
+    await useApi(`http://127.0.0.1:${api.address().port}`);
+    const pomPath = vscode.Uri.joinPath(vscode.workspace.workspaceFolders[0].uri, 'pom.xml');
+    await vscode.workspace.fs.writeFile(pomPath, Buffer.from(`<?xml version="1.0"?>
+<project>
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.example</groupId><artifactId>demo</artifactId><version>1.0.0</version>
+  <dependencies>
+    <dependency><groupId>org.slf4j</groupId><artifactId>slf4j-api</artifactId><version>2.0.16</version></dependency>
+    <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId><version>5.11.0</version><scope>test</scope></dependency>
+    <dependency><groupId>com.fasterxml.jackson.core</groupId><artifactId>jackson-databind</artifactId><version>{jackson.version}</version></dependency>
+    <dependency><groupId>com.example</groupId><artifactId>dynamic</artifactId><version>LATEST</version></dependency>
+  </dependencies>
+</project>`.replace('\u001f', '$')));
+    try {
+      await vscode.commands.executeCommand('provenyx.scanDependencies', pomPath);
+    } finally {
+      await vscode.workspace.fs.delete(pomPath);
+    }
+    assert.strictEqual(api.lastProjectName, 'com.example:demo');
+    assert.deepStrictEqual(api.lastLockfile.packages[''].dependencies, { 'org.slf4j:slf4j-api': '2.0.16' });
+    assert.deepStrictEqual(api.lastLockfile.packages[''].devDependencies, { 'org.junit.jupiter:junit-jupiter': '5.11.0' });
+    assert.ok(api.lastLockfile.provenyxWarnings.some((warning) => warning.includes('jackson-databind')));
+    assert.ok(api.lastLockfile.provenyxWarnings.some((warning) => warning.includes('dynamic')));
+    api.close();
+
+    // 11. Gradle: malformed lock coordinates are skipped and directness is not invented.
+    api = await startFakeApi('full');
+    await useApi(`http://127.0.0.1:${api.address().port}`);
+    const gradlePath = vscode.Uri.joinPath(vscode.workspace.workspaceFolders[0].uri, 'gradle.lockfile');
+    await vscode.workspace.fs.writeFile(gradlePath, Buffer.from([
+      '# This is a Gradle generated file',
+      'com.google.guava:guava:33.3.0-jre=compileClasspath,runtimeClasspath',
+      'malformed-coordinate=runtimeClasspath',
+      'com.example:dynamic:1.+=runtimeClasspath',
+      'empty=',
+      '',
+    ].join('\n')));
+    try {
+      await vscode.commands.executeCommand('provenyx.scanDependencies', gradlePath);
+    } finally {
+      await vscode.workspace.fs.delete(gradlePath);
+    }
+    assert.strictEqual(api.lastLockfile.provenyxPackageManager, 'gradle');
+    assert.deepStrictEqual(api.lastLockfile.packages[''].dependencies, {});
+    assert.ok(Object.values(api.lastLockfile.packages).some(
+      (entry) => entry.name === 'com.google.guava:guava' && entry.version === '33.3.0-jre',
+    ));
+    assert.ok(api.lastLockfile.provenyxWarnings.some((warning) => warning.includes('line 3')));
+    assert.ok(api.lastLockfile.provenyxWarnings.some((warning) => warning.includes('line 4')));
+    api.close();
+
+    // 12. NuGet: target-framework duplicates collapse and direct/transitive edges remain exact.
+    api = await startFakeApi('full');
+    await useApi(`http://127.0.0.1:${api.address().port}`);
+    const nugetPath = vscode.Uri.joinPath(vscode.workspace.workspaceFolders[0].uri, 'packages.lock.json');
+    const nugetFramework = {
+      'Newtonsoft.Json': { type: 'Direct', requested: '[13.0.3, )', resolved: '13.0.3', contentHash: 'json-hash', dependencies: { 'System.Memory': '4.5.5' } },
+      'System.Memory': { type: 'Transitive', resolved: '4.5.5', contentHash: 'memory-hash' },
+    };
+    await vscode.workspace.fs.writeFile(nugetPath, Buffer.from(JSON.stringify({
+      version: 1,
+      dependencies: { 'net8.0': nugetFramework, 'net9.0': nugetFramework },
+    })));
+    try {
+      await vscode.commands.executeCommand('provenyx.scanDependencies', nugetPath);
+    } finally {
+      await vscode.workspace.fs.delete(nugetPath);
+    }
+    assert.strictEqual(api.lastLockfile.provenyxEcosystem, 'NuGet');
+    assert.deepStrictEqual(api.lastLockfile.packages[''].dependencies, { 'Newtonsoft.Json': '13.0.3' });
+    const nugetPackages = Object.values(api.lastLockfile.packages).filter((entry) => entry.version);
+    assert.strictEqual(nugetPackages.length, 2);
+    assert.ok(nugetPackages.some(
+      (entry) => entry.name === 'Newtonsoft.Json' && entry.dependencies['System.Memory'] === '4.5.5',
+    ));
+    api.close();
+
+    // 13. Yarn: scoped descriptors, direct dependencies, integrity, and dependency edges are retained.
+    api = await startFakeApi('full');
+    await useApi(`http://127.0.0.1:${api.address().port}`);
+    const yarnPath = vscode.Uri.joinPath(vscode.workspace.workspaceFolders[0].uri, 'yarn.lock');
+    const yarnManifestPath = vscode.Uri.joinPath(vscode.workspace.workspaceFolders[0].uri, 'package.json');
+    const originalManifest = await vscode.workspace.fs.readFile(yarnManifestPath);
+    await vscode.workspace.fs.writeFile(yarnManifestPath, Buffer.from(JSON.stringify({
+      name: 'yarn-demo', dependencies: { '@scope/parent': '^1.0.0' },
+    })));
+    await vscode.workspace.fs.writeFile(yarnPath, Buffer.from(`# yarn lockfile v1
+
+"@scope/parent@^1.0.0":
+  version "1.0.2"
+  integrity sha512-parent
+  dependencies:
+    child "^2.0.0"
+    ambiguous "^1.0.0"
+
+child@^2.0.0:
+  version "2.1.0"
+  integrity sha512-child
+
+ambiguous@^1.0.0:
+  version "1.1.0"
+
+ambiguous@^2.0.0:
+  version "2.1.0"
+`));
+    try {
+      await vscode.commands.executeCommand('provenyx.scanDependencies', yarnPath);
+    } finally {
+      await vscode.workspace.fs.delete(yarnPath);
+      await vscode.workspace.fs.writeFile(yarnManifestPath, originalManifest);
+    }
+    assert.strictEqual(api.lastProjectName, 'yarn-demo');
+    assert.strictEqual(api.lastLockfile.provenyxPackageManager, 'yarn');
+    assert.deepStrictEqual(api.lastLockfile.packages[''].dependencies, { '@scope/parent': '1.0.2' });
+    assert.ok(Object.values(api.lastLockfile.packages).some(
+      (entry) => entry.name === '@scope/parent' && entry.dependencies.child === '2.1.0',
+    ));
+    assert.ok(Object.values(api.lastLockfile.packages).some(
+      (entry) => entry.name === '@scope/parent' && !('ambiguous' in entry.dependencies),
+    ));
+    assert.ok(api.lastLockfile.provenyxWarnings.some((warning) => warning.includes('ambiguous')));
+    api.close();
+
+    // 14. Bun: JSONC comments/trailing commas and exact root/transitive releases are supported.
+    api = await startFakeApi('full');
+    await useApi(`http://127.0.0.1:${api.address().port}`);
+    const bunPath = vscode.Uri.joinPath(vscode.workspace.workspaceFolders[0].uri, 'bun.lock');
+    await vscode.workspace.fs.writeFile(bunPath, Buffer.from(`{
+  // Bun text lockfile
+  "lockfileVersion": 1,
+  "workspaces": { "": { "name": "bun-demo", "dependencies": { "parent": "^1.0.0", "local": "workspace:*" } } },
+  "packages": {
+    "parent": ["parent@1.2.0", "", { "child": "^2.0.0" }, "sha512-parent"],
+    "child": ["child@2.3.0", "", {}, "sha512-child"],
+    "local": ["local@workspace:packages/local", "", {}],
+  },
+}`));
+    try {
+      await vscode.commands.executeCommand('provenyx.scanDependencies', bunPath);
+    } finally {
+      await vscode.workspace.fs.delete(bunPath);
+    }
+    assert.strictEqual(api.lastProjectName, 'bun-demo');
+    assert.deepStrictEqual(api.lastLockfile.packages[''].dependencies, { parent: '1.2.0' });
+    assert.ok(Object.values(api.lastLockfile.packages).some(
+      (entry) => entry.name === 'parent' && entry.dependencies.child === '2.3.0',
+    ));
+    assert.ok(!Object.values(api.lastLockfile.packages).some((entry) => entry.name === 'local'));
+    assert.ok(api.lastLockfile.provenyxWarnings.some((warning) => warning.includes('local')));
+    api.close();
+
+    // 15. Ruby Bundler: GEM specs and direct dependencies form an exact graph.
+    api = await startFakeApi('full');
+    await useApi(`http://127.0.0.1:${api.address().port}`);
+    const gemPath = vscode.Uri.joinPath(vscode.workspace.workspaceFolders[0].uri, 'Gemfile.lock');
+    await vscode.workspace.fs.writeFile(gemPath, Buffer.from(`GEM
+  remote: https://rubygems.org/
+  specs:
+    rack (3.1.7)
+      base64
+    base64 (0.2.0)
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  rack (~> 3.1)
+  missing (~> 1.0)
+
+BUNDLED WITH
+   2.5.18
+`));
+    try {
+      await vscode.commands.executeCommand('provenyx.scanDependencies', gemPath);
+    } finally {
+      await vscode.workspace.fs.delete(gemPath);
+    }
+    assert.strictEqual(api.lastLockfile.provenyxEcosystem, 'RubyGems');
+    assert.deepStrictEqual(api.lastLockfile.packages[''].dependencies, { rack: '3.1.7' });
+    assert.ok(Object.values(api.lastLockfile.packages).some(
+      (entry) => entry.name === 'rack' && entry.dependencies.base64 === '0.2.0',
+    ));
+    assert.ok(api.lastLockfile.provenyxWarnings.some((warning) => warning.includes('missing')));
+    api.close();
+
+    // 16. Dart Pub: direct main/dev and transitive releases remain distinct.
+    api = await startFakeApi('full');
+    await useApi(`http://127.0.0.1:${api.address().port}`);
+    const pubPath = vscode.Uri.joinPath(vscode.workspace.workspaceFolders[0].uri, 'pubspec.lock');
+    await vscode.workspace.fs.writeFile(pubPath, Buffer.from(`packages:
+  http:
+    dependency: "direct main"
+    description: {name: http, url: "https://pub.dev"}
+    source: hosted
+    version: "1.2.2"
+  test:
+    dependency: "direct dev"
+    description: {name: test, url: "https://pub.dev"}
+    source: hosted
+    version: "1.25.8"
+  collection:
+    dependency: transitive
+    description: {name: collection, url: "https://pub.dev"}
+    source: hosted
+    version: "1.19.0"
+  dynamic:
+    dependency: transitive
+    description: {name: dynamic, url: "https://pub.dev"}
+    source: hosted
+    version: "1.*"
+sdks: {dart: ">=3.5.0 <4.0.0"}
+`));
+    try {
+      await vscode.commands.executeCommand('provenyx.scanDependencies', pubPath);
+    } finally {
+      await vscode.workspace.fs.delete(pubPath);
+    }
+    assert.deepStrictEqual(api.lastLockfile.packages[''].dependencies, { http: '1.2.2' });
+    assert.deepStrictEqual(api.lastLockfile.packages[''].devDependencies, { test: '1.25.8' });
+    assert.ok(Object.values(api.lastLockfile.packages).some((entry) => entry.name === 'collection'));
+    assert.ok(!Object.values(api.lastLockfile.packages).some((entry) => entry.name === 'dynamic'));
+    assert.ok(api.lastLockfile.provenyxWarnings.some((warning) => warning.includes('dynamic')));
+    api.close();
+
+    // 17. Swift: semantic-version pins are scanned while revision-only pins are explicitly skipped.
+    api = await startFakeApi('full');
+    await useApi(`http://127.0.0.1:${api.address().port}`);
+    const swiftPath = vscode.Uri.joinPath(vscode.workspace.workspaceFolders[0].uri, 'Package.resolved');
+    await vscode.workspace.fs.writeFile(swiftPath, Buffer.from(JSON.stringify({
+      version: 2,
+      pins: [
+        { identity: 'swift-nio', location: 'https://github.com/apple/swift-nio.git', state: { revision: 'abc123', version: '2.72.0' } },
+        { identity: 'local-branch', location: 'https://example.test/local.git', state: { revision: 'def456', branch: 'main' } },
+        { identity: 'invalid-version', location: 'https://example.test/invalid.git', state: { revision: 'ghi789', version: 'main' } },
+      ],
+    })));
+    try {
+      await vscode.commands.executeCommand('provenyx.scanDependencies', swiftPath);
+    } finally {
+      await vscode.workspace.fs.delete(swiftPath);
+    }
+    assert.strictEqual(api.lastLockfile.provenyxEcosystem, 'SwiftURL');
+    assert.strictEqual(Object.values(api.lastLockfile.packages).filter((entry) => entry.version).length, 1);
+    assert.ok(api.lastLockfile.provenyxWarnings.some((warning) => warning.includes('local-branch')));
+    assert.ok(api.lastLockfile.provenyxWarnings.some((warning) => warning.includes('invalid-version')));
+    api.close();
+
+    // 18. Backend offline: no crash, clear state.
     await useApi('http://127.0.0.1:9');
     const errors = [];
     const originalError = vscode.window.showErrorMessage;
@@ -232,7 +589,7 @@ snapshots:
     assert.strictEqual(tree.lastScan.kind, 'failed');
     assert.match(tree.lastScan.message, /Cannot reach the Provenyx API/);
 
-    // 7. Lockfile watcher: a burst of writes starts ONE consent-gated scan, and declining sends nothing.
+    // 19. Lockfile watcher: a burst of writes starts ONE consent-gated scan, and declining sends nothing.
     api = await startFakeApi('full');
     await useApi(`http://127.0.0.1:${api.address().port}`);
     consentChoice = undefined;
@@ -254,7 +611,7 @@ snapshots:
     await vscode.workspace.getConfiguration('provenyx').update('autoScanEnabled', undefined, vscode.ConfigurationTarget.Global);
     api.close();
 
-    // 8. Optional: the real backend, if PROVENYX_SMOKE_REAL_API is set (e.g. http://127.0.0.1:8000).
+    // 20. Optional: the real backend, if PROVENYX_SMOKE_REAL_API is set (e.g. http://127.0.0.1:8000).
     const real = process.env.PROVENYX_SMOKE_REAL_API;
     if (real) {
       await useApi(real);

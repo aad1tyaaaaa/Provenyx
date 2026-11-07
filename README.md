@@ -23,7 +23,7 @@ Explainable software supply-chain security for npm projects, in your editor, you
 
 ## Overview
 
-Provenyx is a software supply-chain security tool for JavaScript and TypeScript projects using npm or pnpm, and PHP projects using Composer. It reviews what changed in your dependencies and explains each finding with evidence. npm releases can also be checked against a blockchain registry of approved release manifests. Provenyx never installs or runs your packages.
+Provenyx is a software supply-chain security tool for JavaScript, PHP, Python, Go, Rust, JVM, .NET, Ruby, Dart, and Swift projects. It reviews exact dependency versions and explains each finding with evidence. npm releases can also be checked against a blockchain registry of approved release manifests. Provenyx never installs or runs your packages.
 
 It has three parts: a **VS Code extension** (the main product), a **web dashboard** for deeper investigation, and a **smart-contract registry** for approved releases. All three use one **FastAPI backend**.
 
@@ -126,8 +126,8 @@ Every answer comes with its evidence, and Provenyx is explicit about what it doe
  └─────────────────────────────────────────────┘
 ```
 
-1. In VS Code you run **Provenyx: Scan Dependencies**. The extension finds `package-lock.json`, `pnpm-lock.yaml`, or `composer.lock`, checks it locally, and asks for consent before sending anything. For Composer, dependency declarations from adjacent `composer.json` are included when available so direct packages can be identified.
-2. The backend stores a snapshot and analyses it in the background. It parses the lockfile, builds a dependency graph that keeps multiple installed versions distinct, and fetches public npm metadata with bounded concurrency, caching, timeouts and retries.
+1. In VS Code you run **Provenyx: Scan Dependencies**. The extension finds supported dependency files, normalizes exact versions locally, and asks for consent before sending dependency data. Source files are never uploaded.
+2. The backend stores a snapshot and analyses it in the background. It builds a dependency graph that keeps multiple installed versions distinct and, for npm only, fetches public registry metadata with bounded concurrency, caching, timeouts and retries.
 3. Every exact package version is checked against public OSV advisories. If the project has been scanned before, the new graph is also compared with the latest completed scan for suspicious changes.
 4. The extension follows the scan to completion and lists the findings in the sidebar. Clicking a finding opens it in the dashboard.
 5. In the dashboard you can explore the graph, read the evidence, and **verify a release** against the on-chain registry.
@@ -136,7 +136,7 @@ Every answer comes with its evidence, and Provenyx is explicit about what it doe
 
 ### VS Code extension
 
-- **Provenyx: Scan Dependencies.** Finds `package-lock.json` (v1–v3), validates it locally (10 MB limit), asks for consent, submits it, and follows the scan to completion.
+- **Provenyx: Scan Dependencies.** Finds npm, pnpm, Yarn, Bun, Composer, Pipenv, requirements, Go, Cargo, Maven, Gradle, NuGet, Bundler, Pub, and Swift dependency files, validates and normalizes them locally (10 MB limit), asks for consent, submits them, and follows the scan to completion.
 - **Findings sidebar.** Shows the project, backend connection, last scan status, and findings sorted by severity and priority. Tooltips include the explanation, confidence, priority and dependency path.
 - **Provenyx: Open Dashboard.** Opens the dashboard, or the exact scan or finding when you click a sidebar item.
 - **Provenyx: Check Backend Connection.**
@@ -146,8 +146,8 @@ Every answer comes with its evidence, and Provenyx is explicit about what it doe
 ### Web dashboard
 
 - **Dashboard.** Shows backend status, setup guidance, real scan history, and metrics from the latest completed scan.
-- **New scan** (`/scan/new`). Upload a lockfile; it is validated in the browser, and you tick an explicit consent box that names the API URL.
-- **GitHub sign-in and projects** (`/github`). Sign in with GitHub and scan a lockfile straight from one of your repositories, public or private. The token stays in an encrypted, HTTP-only cookie and is never stored.
+- **New scan** (`/scan/new`). Upload any supported dependency file and optional adjacent manifest; it is checked in the browser, and you tick an explicit consent box that names the API URL.
+- **GitHub sign-in and projects** (`/github`). Sign in with GitHub and scan any supported dependency file straight from one of your repositories, public or private. The token stays in an encrypted, HTTP-only cookie and is never stored.
 - **Scan detail** (`/scans/[id]`):
   - live progress while the scan runs
   - metrics and analysis notes (what could not be determined)
@@ -261,7 +261,7 @@ The registry runs on a **local Hardhat development chain only**. No public netwo
 ## Safety and privacy principles
 
 - **Never executes scanned code.** No `npm install`, no lifecycle scripts, no package code. Lockfiles are treated as data. One test fixture even contains a fake install script to show that nothing runs it.
-- **Never uploads without consent.** Each scan is confirmed, the destination URL is shown, and only `package-lock.json` is sent.
+- **Never uploads without consent.** Each scan is confirmed, the destination URL is shown, and only selected dependency data plus an optional adjacent package manifest is sent. Source code is never uploaded.
 - **Never invents results.** No fake findings, metrics or risk scores. When metadata is missing, it is shown as unknown.
 - **Limits AI disclosure.** Optional Gemini ranking receives generated finding summaries only and falls back to deterministic scores.
 - **Interprets results honestly.** A missing blockchain record is not evidence of malice, and a matching hash is not proof of safety.
@@ -409,7 +409,7 @@ Set the same `PROVENYX_API_KEY` on Render and Vercel. If your Render service URL
 
 | Suite | Command | Covers |
 |---|---|---|
-| Backend (93 tests) | `cd backend && python -m pytest` | Health, scan API, parser, graph, comparison, detection rules, npm client, end to end, release verification and the shared test values. Each test uses its own temporary database and no real npm traffic. |
+| Backend (110 tests) | `cd backend && python -m pytest` | Health, scan API, ecosystem parser, graph, comparison, detection rules, registry clients, end to end, release verification and shared test values. Each test uses its own temporary database and no real registry traffic. |
 | Contracts (6 tests) | `npm run test:contracts` | Anchoring, records, access control, write-once, and the values shared with Python. |
 | Extension smoke test | `npm --prefix extension run test:smoke` | Runs in a real VS Code instance: activation, commands, consent, scan → findings, backend offline, debounced watcher, and an empty workspace. Add `PROVENYX_SMOKE_REAL_API=http://127.0.0.1:8000` to also run a real scan. |
 | Frontend | `npm run build:frontend` | Production build with full type checking. |
