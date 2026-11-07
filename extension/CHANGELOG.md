@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.6
 
 - Add local dependency adapters for npm, pnpm, Yarn, Bun, Composer, Pipenv, requirements files, Go modules, Cargo, Maven, Gradle, NuGet, Bundler, Pub, and Swift Package Manager.
 - Isolate baselines by ecosystem, package manager, and workspace component, and attach Package URLs to graph nodes.

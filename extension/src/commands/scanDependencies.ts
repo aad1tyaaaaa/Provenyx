@@ -7,7 +7,7 @@ import { openDashboard, scanPath } from '../utils/dashboard';
 import { showApiError } from '../utils/errors';
 import { findLockfiles, projectName, readLockfile } from '../utils/workspace';
 
-const CLIENT = 'vscode-extension/0.1.5';
+const CLIENT = 'vscode-extension/0.1.6';
 const POLL_INTERVAL_MS = 2_000;
 const POLL_LIMIT_MS = 120_000;
 

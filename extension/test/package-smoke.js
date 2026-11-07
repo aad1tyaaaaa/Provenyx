@@ -4,7 +4,7 @@ const vscode = require('vscode');
 exports.run = async function run() {
   const extension = vscode.extensions.getExtension('OmkarPramodBandikatte.provenyx-security');
   assert.ok(extension, 'packaged Provenyx extension not loaded');
-  assert.strictEqual(extension.packageJSON.version, '0.1.5');
+  assert.strictEqual(extension.packageJSON.version, '0.1.6');
   assert.strictEqual(
     extension.packageJSON.contributes.configuration.properties['provenyx.apiBaseUrl'].default,
     'https://devknights.onrender.com',
@@ -44,5 +44,5 @@ exports.run = async function run() {
     version: '0.1.0',
   });
 
-  console.log('[provenyx package smoke] OK: 0.1.5 activation, migration, metadata, commands, Render health');
+  console.log('[provenyx package smoke] OK: 0.1.6 activation, migration, metadata, commands, Render health');
 };

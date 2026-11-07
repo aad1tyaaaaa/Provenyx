@@ -2,7 +2,7 @@
   "name": "provenyx-security",
   "displayName": "Provenyx Security",
   "description": "Software dependency trust and supply-chain security analysis",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "publisher": "OmkarPramodBandikatte",
   "contributors": [
     "Aaditya Shivshankar Jaiswar",
